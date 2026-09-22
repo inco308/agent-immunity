@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-immunity"
+version = "0.1.0"
+description = "Runtime Security Boundary Isolation & Dynamic Immunity Gateway for AI Agents and MCP Ecosystem"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Agent Immunity Open Source Team" }
+]
+keywords = [
+    "ai-agent",
+    "cybersecurity",
+    "prompt-injection",
+    "mcp",
+    "taint-tracking",
+    "runtime-security",
+    "zero-trust",
+    "sandboxing"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Topic :: Security",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+requires-python = ">=3.10"
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/your-username/agent-immunity"
+Repository = "https://github.com/your-username/agent-immunity.git"
+Documentation = "https://github.com/your-username/agent-immunity/tree/main/docs"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agent_immunity*"]

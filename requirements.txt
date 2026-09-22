@@ -1,0 +1,4 @@
+# agent-immunity: pure standard library core (Python 3.10+)
+# Optional dependencies for extended visualization and ONNX acceleration:
+# onnxruntime>=1.15.0
+# numpy>=1.22.0
