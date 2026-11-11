@@ -57,6 +57,10 @@ python -m agent_immunity.mcp_stdio --policy examples/policy.json -- python ../lo
 
 此入口使用 Python 3.12、Node 24.22.1 和单独锁定依赖；不修改全局客户端配置。结果保存在 `artifacts/interop/report.json`，实际业务产物为 `artifacts/interop/status-report.md`。报告公开保留“重连后旧凭证状态未继承”的已知漏检。流程没有调用 LLM，不代表模型规划评测或其他客户端宿主的兼容性。
 
+## 真实 LLM 工具规划评测
+
+[真实 LLM 评测指南](docs/llm-evaluation.md)提供 Ollama、Codex CLI 和 WSL dsh 入口：模型逐步生成动作 JSON，官方 MCP SDK 实际执行业务工具，分别连接真实代理与同一个受控上游基线。八个固定场景覆盖正常任务、间接提示注入和虚构凭据泄漏；任务产物、实际攻击副作用、条件拦截率与调用误报分别验收。该入口及手动模型 CI 与上述规则、协议验证分开报告，当前文档不预填模型成绩或 CI 结论。
+
 ## 证据如何解读
 
 当前规则数据集有 20 条预设调用：14 条攻击调用（包含 2 条已知漏检）和 6 条良性调用。其模拟决策结果为：
@@ -77,6 +81,7 @@ python -m agent_immunity.mcp_stdio --policy examples/policy.json -- python ../lo
 - [架构、策略字段与 Python API](docs/architecture.md)
 - [MCP 接入及协议范围](docs/mcp_integration.md)
 - [官方 Inspector 与独立 SDK 的端到端验证](docs/interop.md)
+- [真实 LLM 工具规划评测](docs/llm-evaluation.md)
 - [基准和验证方法](docs/benchmark_guide.md)
 - [安全边界与问题报告](SECURITY.md)
 - [0.1 到 0.2 迁移](docs/migration_0_2.md)

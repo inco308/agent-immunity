@@ -62,6 +62,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: 真实客户端与 SDK 上游端到端验证
         run: python -X utf8 interop/run_e2e.py
+      - name: LLM 评测器隔离与验收回归（测试替身，非模型成绩）
+        run: python -X utf8 -m unittest interop.test_llm_harness -v
       - name: 保存公开验证结果
         if: always()
         uses: actions/upload-artifact@v7.0.2

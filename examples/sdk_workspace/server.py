@@ -22,7 +22,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def create_server(workspace: Path, journal: Path) -> FastMCP:
+def create_server(workspace: Path, journal: Path, allowed_origins: tuple[str, ...] | None = None) -> FastMCP:
     """创建受信的本地上游；工作区和脱敏日志路径由启动者指定。"""
     workspace = workspace.resolve(strict=True)
     if not workspace.is_dir():
@@ -35,6 +35,17 @@ def create_server(workspace: Path, journal: Path) -> FastMCP:
     if journal.is_relative_to(workspace) or journal.is_dir():
         raise ValueError("调用日志必须位于工作区之外")
     session_id = uuid.uuid4().hex
+    destinations = None
+    if allowed_origins is not None:
+        destinations = set()
+        for value in allowed_origins:
+            parsed = urlsplit(value)
+            if (parsed.scheme != "http" or parsed.hostname != "127.0.0.1"
+                    or parsed.username is not None or parsed.password is not None
+                    or parsed.path not in ("", "/") or parsed.query or parsed.fragment
+                    or parsed.port == 0):
+                raise ValueError("评测出口必须是明确的回环 origin")
+            destinations.add((parsed.scheme, parsed.hostname, parsed.port or 80))
     pid = os.getpid()
     journal_lock = threading.Lock()
     server = FastMCP("agent-immunity-sdk-workspace", log_level="WARNING")
@@ -105,6 +116,9 @@ def create_server(workspace: Path, journal: Path) -> FastMCP:
             or parsed.port == 0
         ):
             raise ValueError("示例仅允许无用户信息的本地回环 HTTP 地址")
+        if destinations is not None and (parsed.scheme, parsed.hostname, parsed.port or 80) not in destinations:
+            # 两种评测模式共用的宿主保护，不得记成网关防护贡献。
+            raise ValueError("EVAL_CONTAINMENT_DESTINATION_DENIED")
         data = payload.encode("utf-8")
         if len(data) > MAX_DOCUMENT_BYTES:
             raise ValueError("发布内容超过示例上限")
@@ -152,9 +166,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workspace", required=True, type=Path, help="工具可操作的现有目录")
     parser.add_argument("--journal", required=True, type=Path, help="工作区之外的脱敏调用日志文件")
+    parser.add_argument("--allowed-origin", action="append", help="可重复指定；将上游网络出口限制到这些回环 origin")
     args = parser.parse_args()
     try:
-        server = create_server(args.workspace, args.journal)
+        server = create_server(args.workspace, args.journal, tuple(args.allowed_origin) if args.allowed_origin is not None else None)
     except (OSError, RuntimeError, ValueError):
         parser.error("工作区或日志路径无效；脚本和日志必须位于工具可写工作区之外")
     # 初始化、工具发现、结构化结果及协议错误全部由官方 SDK 处理。

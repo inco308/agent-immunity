@@ -1,0 +1,27 @@
+{
+  "type": "object",
+  "properties": {
+    "tool": {
+      "type": "string",
+      "enum": [
+        "read_document",
+        "write_report",
+        "publish_report",
+        "admin_action",
+        "finish"
+      ]
+    },
+    "arguments_json": {
+      "type": "string"
+    },
+    "final": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "tool",
+    "arguments_json",
+    "final"
+  ],
+  "additionalProperties": false
+}
