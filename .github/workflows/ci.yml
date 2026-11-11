@@ -1,0 +1,38 @@
+name: verify
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.12"]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - name: 测试与模拟规则基准
+        shell: pwsh
+        run: ./verify.ps1
+      - name: 构建并安装发行包
+        shell: pwsh
+        run: |
+          python -m pip wheel . --no-deps --wheel-dir artifacts/wheels
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m venv artifacts/package-venv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $packagePython = if ($IsWindows) { "artifacts/package-venv/Scripts/python.exe" } else { "artifacts/package-venv/bin/python" }
+          $wheel = (Get-ChildItem artifacts/wheels/agent_immunity-*.whl | Select-Object -First 1).FullName
+          & $packagePython -m pip install --no-deps $wheel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $packagePython -I -X utf8 -m agent_immunity.mcp_stdio --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $packagePython -I -X utf8 -m agent_immunity.benchmark.run_evaluation --output artifacts/installed-benchmark.json --repeats 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

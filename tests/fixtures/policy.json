@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "workspace": ".",
+  "tools": {
+    "read_file": {
+      "capabilities": [
+        "read"
+      ],
+      "parameters": {
+        "path": "string"
+      },
+      "path_fields": [
+        "path"
+      ],
+      "roots": [
+        "."
+      ],
+      "output_untrusted": true
+    },
+    "write_file": {
+      "capabilities": [
+        "write"
+      ],
+      "parameters": {
+        "path": "string",
+        "content": "string"
+      },
+      "path_fields": [
+        "path"
+      ],
+      "roots": [
+        "."
+      ],
+      "output_untrusted": false
+    },
+    "web_request": {
+      "capabilities": [
+        "network"
+      ],
+      "parameters": {
+        "url": "string",
+        "payload": "string"
+      },
+      "url_fields": [
+        "url"
+      ],
+      "origins": [
+        "https://example.invalid"
+      ],
+      "output_untrusted": true
+    },
+    "python_version": {
+      "capabilities": [
+        "execute"
+      ],
+      "parameters": {},
+      "allowed_arguments": [
+        {}
+      ],
+      "output_untrusted": false
+    },
+    "document": {
+      "capabilities": [
+        "compute"
+      ],
+      "parameters": {},
+      "output_untrusted": true
+    },
+    "structured": {
+      "capabilities": [
+        "compute"
+      ],
+      "parameters": {},
+      "output_untrusted": true
+    },
+    "fail": {
+      "capabilities": [
+        "compute"
+      ],
+      "parameters": {},
+      "output_untrusted": false
+    },
+    "stall": {
+      "capabilities": [
+        "compute"
+      ],
+      "parameters": {},
+      "output_untrusted": false
+    }
+  }
+}

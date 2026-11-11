@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "workspace": "workspace",
+  "tools": {
+    "read_file": {
+      "capabilities": [
+        "read"
+      ],
+      "parameters": {
+        "path": "string"
+      },
+      "path_fields": [
+        "path"
+      ],
+      "roots": [
+        "."
+      ],
+      "output_untrusted": true
+    },
+    "write_file": {
+      "capabilities": [
+        "write"
+      ],
+      "parameters": {
+        "path": "string",
+        "content": "string"
+      },
+      "path_fields": [
+        "path"
+      ],
+      "roots": [
+        "."
+      ],
+      "output_untrusted": false
+    },
+    "python_version": {
+      "capabilities": [
+        "execute"
+      ],
+      "parameters": {},
+      "allowed_arguments": [
+        {}
+      ],
+      "output_untrusted": false
+    }
+  }
+}

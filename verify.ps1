@@ -1,44 +1,14 @@
-# verify.ps1 - Agent Immunity One-Click Verification Script
+# 在脚本所在仓库执行；测试失败时立即返回非零退出码。
 $ErrorActionPreference = "Stop"
-
-Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host " [agent-immunity] Starting One-Click Autonomous Verification " -ForegroundColor Cyan
-Write-Host "==========================================================" -ForegroundColor Cyan
-
-# Locate Python
-$pythonCmd = "python"
-if (-not (Get-Command $pythonCmd -ErrorAction SilentlyContinue)) {
-    Write-Error "Python 3 is not found in PATH."
-    exit 1
+Push-Location $PSScriptRoot
+try {
+    & python -X utf8 -m unittest discover -s tests -v
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & python -X utf8 -m agent_immunity.benchmark.run_evaluation --output artifacts/benchmark.json
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & python -X utf8 -m agent_immunity.mcp_stdio --help
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Write-Host "Verification passed: tests, simulated benchmark, CLI."
+} finally {
+    Pop-Location
 }
-
-Write-Host "[1/4] Running 24 Unit Tests (Core & Cross-Validation)..." -ForegroundColor Yellow
-& $pythonCmd -m unittest discover -s tests -v
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "Unit tests failed!"
-    exit 1
-}
-
-Write-Host "`n[2/4] Running MCP JSON-RPC 2.0 Security Proxy Verification..." -ForegroundColor Yellow
-& $pythonCmd agent_immunity/cross_validate/mcp_proxy_demo.py
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "MCP proxy verification failed!"
-    exit 1
-}
-
-Write-Host "`n[3/4] Running OS Kernel Probe Zero-Syscall Verification..." -ForegroundColor Yellow
-& $pythonCmd agent_immunity/cross_validate/kernel_audit_probe.py
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "Kernel probe verification failed!"
-    exit 1
-}
-
-Write-Host "`n[4/4] Running Egress Traffic Sniffer Physical Zero-Leak Verification..." -ForegroundColor Yellow
-& $pythonCmd agent_immunity/cross_validate/egress_traffic_sniffer.py
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "Egress sniffer verification failed!"
-    exit 1
-}
-
-Write-Host "`n>>> [SUCCESS] All agent-immunity test suites & verification gates passed cleanly!" -ForegroundColor Green
-exit 0

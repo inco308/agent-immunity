@@ -52,4 +52,7 @@ coverage.xml
 
 # Benchmark transient outputs
 *.pcap
-!agent_immunity/benchmark/*.pcap
+.test-tmp/
+artifacts/
+examples/workspace/*
+!examples/workspace/sample.txt

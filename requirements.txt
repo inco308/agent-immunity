@@ -1,4 +1,2 @@
-# agent-immunity: pure standard library core (Python 3.10+)
-# Optional dependencies for extended visualization and ONNX acceleration:
-# onnxruntime>=1.15.0
-# numpy>=1.22.0
+# 运行、测试和模拟基准均仅使用 Python 3.10+ 标准库。
+# 构建 wheel 另需 pyproject.toml 中声明的 setuptools。
