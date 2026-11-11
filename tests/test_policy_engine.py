@@ -152,6 +152,9 @@ class PolicyEngineTests(unittest.TestCase):
             loop = self.root / "loop"
             loop.symlink_to(loop, target_is_directory=True)
             self.assertEqual(self.engine.check_call(ToolCall("2", "write_file", {"path": str(loop / "out.txt"), "content": "ok"})).code, "ARGUMENTS_DENIED")
+            dangling = self.root / "dangling"
+            dangling.symlink_to(self.root / "missing-target", target_is_directory=True)
+            self.assertEqual(self.engine.check_call(ToolCall("3", "write_file", {"path": str(dangling / "out.txt"), "content": "ok"})).code, "ARGUMENTS_DENIED")
 
     def test_ambiguous_paths_and_zero_port_are_denied(self):
         for path in ["C:relative.txt", "NUL", "CON.txt", "foo. ", "file.txt:stream", "out\x01.txt"]:
@@ -167,6 +170,23 @@ class PolicyEngineTests(unittest.TestCase):
                 Policy.from_dict(policy_data(self.root))
             with self.assertRaises(PolicyError):
                 Policy.load("loop")
+
+    def test_suppressed_windows_resolution_error_is_denied(self):
+        def resolve_with_unfollowable_link(path, strict=False):
+            # 模拟 Windows 非严格解析吞掉重解析点错误的行为，无需创建链接权限。
+            if strict:
+                raise OSError("unfollowable reparse point")
+            return path
+        with patch.object(Path, "resolve", autospec=True, side_effect=resolve_with_unfollowable_link):
+            decision = self.engine.check_call(ToolCall("1", "write_file", {"path": "not-yet-created/out.txt", "content": "ok"}))
+        self.assertEqual(decision.code, "ARGUMENTS_DENIED")
+
+    def test_missing_output_is_allowed_but_file_parent_is_denied(self):
+        self.assertTrue(self.engine.check_call(ToolCall("1", "write_file", {"path": "new-directory/nested/out.txt", "content": "ok"})).allowed)
+        (self.root / "regular.txt").write_text("public", encoding="utf-8")
+        self.assertFalse(self.engine.check_call(ToolCall("2", "write_file", {"path": "regular.txt/child.txt", "content": "ok"})).allowed)
+        with patch.object(Path, "lstat", side_effect=FileNotFoundError):
+            self.assertFalse(self.engine.check_call(ToolCall("3", "write_file", {"path": "out.txt", "content": "ok"})).allowed)
 
     def test_json_text_credentials_and_unknown_name_redaction(self):
         self.engine.execute(ToolCall("1", "document", {}), lambda *_: ToolResult(json.dumps({"password": DATA["secret"]})))

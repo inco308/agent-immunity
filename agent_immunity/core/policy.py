@@ -13,7 +13,26 @@ class PolicyError(ValueError):
 
 def resolved(path, strict=False):
     try:
-        return path.resolve(strict=strict)
+        if strict:
+            return path.resolve(strict=True)
+        # 输出文件可能尚不存在，但已存在的祖先必须能被完整解析。
+        # Windows 的非严格解析会吞掉链接环、权限等错误，不能用于安全判定。
+        missing = []
+        current = path
+        while True:
+            try:
+                current.lstat()
+            except FileNotFoundError:
+                parent = current.parent
+                if parent == current:
+                    raise PolicyError("路径不存在可解析的根目录")
+                missing.append(current.name)
+                current = parent
+            else:
+                existing = current.resolve(strict=True)
+                if missing and not existing.is_dir():
+                    raise PolicyError("不存在的路径组件必须位于目录之下")
+                return existing.joinpath(*reversed(missing))
     except RuntimeError as exc:
         # Python 3.10–3.12 将符号链接环报告为 RuntimeError。
         raise PolicyError("路径无法安全解析") from exc

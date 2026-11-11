@@ -55,6 +55,12 @@ powershell -ExecutionPolicy Bypass -File .\verify.ps1
 - 上层工作区 `D:/Workspace/patent/verify.ps1` 通过；其运行产生的原始 PoC 基准和 PCAP 文件随后恢复到原字节内容。上层脚本通过仅说明历史工程未被破坏，不代表其“物理证明”或专利有效性成立。
 - Git 差异格式检查通过。新增 CI 已配置；本地验收不替代 GitHub 托管 runner 的结果，应查看对应提交的 Actions 运行。
 
+## 首次推送后的 CI 修复记录
+
+提交 `2d4f834` 的[首轮 CI](https://github.com/inco308/agent-immunity/actions/runs/43022818305) 中，Linux 两组及 Windows Python 3.10 通过；Windows Python 3.12 实际执行链接环用例时发现，非严格路径解析会吞掉部分底层解析错误并返回未解析路径。
+
+修复改为用 `lstat` 区分缺失组件与已存在路径，严格解析最近已存在的祖先，然后附回合法的缺失组件；断链、链接环、非目录祖先和无法解析的根会被拒绝。保留真实符号链接用例，并新增无需链接权限的 Windows 行为模拟与正常新文件对照。修复后的本地完整验证为 **40 项测试，39 项通过、1 项因宿主链接权限跳过**，退出码为 0，日志位于 `artifacts/ci-fix-verification.log`。远端结论以修复提交对应的 Actions 为准。
+
 ## 模拟基准结果
 
 20 条固定输入，14 条攻击调用（含 2 条已知漏检）、6 条良性调用；每条重复决策计时 100 次。没有实际执行这些目标工具，也没有调用模型。
