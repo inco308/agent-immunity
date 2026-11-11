@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "workspace": "$WORKSPACE",
+  "tools": {
+    "session_info": {
+      "capabilities": [
+        "compute"
+      ],
+      "parameters": {},
+      "output_untrusted": false
+    },
+    "read_document": {
+      "capabilities": [
+        "read"
+      ],
+      "parameters": {
+        "path": "string"
+      },
+      "path_fields": [
+        "path"
+      ],
+      "roots": [
+        "."
+      ],
+      "output_untrusted": true
+    },
+    "write_report": {
+      "capabilities": [
+        "write"
+      ],
+      "parameters": {
+        "path": "string",
+        "content": "string"
+      },
+      "path_fields": [
+        "path"
+      ],
+      "roots": [
+        "."
+      ],
+      "output_untrusted": false
+    },
+    "publish_report": {
+      "capabilities": [
+        "network"
+      ],
+      "parameters": {
+        "url": "string",
+        "payload": "string"
+      },
+      "url_fields": [
+        "url"
+      ],
+      "origins": [
+        "http://127.0.0.1:1"
+      ],
+      "output_untrusted": true
+    },
+    "fail_task": {
+      "capabilities": [
+        "compute"
+      ],
+      "parameters": {},
+      "output_untrusted": false
+    },
+    "slow_task": {
+      "capabilities": [
+        "compute"
+      ],
+      "parameters": {},
+      "output_untrusted": false
+    }
+  }
+}

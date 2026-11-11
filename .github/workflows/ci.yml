@@ -36,3 +36,38 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $packagePython -I -X utf8 -m agent_immunity.benchmark.run_evaluation --output artifacts/installed-benchmark.json --repeats 2
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  interop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: "24.22.1"
+      - name: 安装锁定的独立客户端及 SDK
+        shell: pwsh
+        run: |
+          python -m pip install --require-hashes -r interop/requirements.lock
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm ci --prefix interop --ignore-scripts --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: 真实客户端与 SDK 上游端到端验证
+        run: python -X utf8 interop/run_e2e.py
+      - name: 保存公开验证结果
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: interop-${{ matrix.os }}
+          path: |
+            artifacts/interop/report.json
+            artifacts/interop/status-report.md
+          if-no-files-found: warn

@@ -54,5 +54,6 @@ coverage.xml
 *.pcap
 .test-tmp/
 artifacts/
+node_modules/
 examples/workspace/*
 !examples/workspace/sample.txt

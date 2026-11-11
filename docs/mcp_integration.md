@@ -18,6 +18,12 @@ python -m agent_immunity.mcp_stdio --policy examples/policy.json -- python ../lo
 
 若已通过 `python -m pip install .` 安装，可使用等价入口 `agent-immunity --policy ... -- ...`。旧模块名 `python -m agent_immunity.cross_validate.mcp_proxy_demo` 转发到新入口，同样需要策略和上游参数；不再运行预制演示。
 
+## 官方客户端互操作入口
+
+[互操作指南](interop.md)提供 MCP Inspector 2.14.0 的 `mcpdo` 持久连接客户端及官方 Python SDK 1.30.0 上游，包含可复制的配置、安装命令、完整文件/HTTP 业务链和端到端断言。它使用独立的 Python 3.12 测试环境与 Node 24.22.1；核心代理的标准库依赖范围不变。
+
+该客户端在工具发现中看不到未登记工具时，会自行返回 `tool_not_found`；端到端报告将这种客户端拒绝与代理的 `ARGUMENTS_DENIED`、`SENSITIVE_FLOW` 区分。mcpdo 在连接断开后可以重新连接，但新代理会话不继承旧凭证记录；会话连续性通过上游随机 ID 核对。取消补充验证使用 Python SDK 的公开通知接口，不将其归为 Inspector 的取消能力，也不扩展为其他宿主的兼容性声明。
+
 ## 手工检查协议
 
 终端启动后，先发送一行初始化请求：

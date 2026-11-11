@@ -1,0 +1,12 @@
+{
+  "name": "agent-immunity-interop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "官方 MCP Inspector 客户端互操作验证依赖",
+  "engines": {
+    "node": "24.22.1"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/inspector": "2.14.0"
+  }
+}

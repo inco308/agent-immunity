@@ -2,7 +2,7 @@
 
 Agent Immunity 0.2 是实验性的工具调用策略检查器，提供一个真实的 MCP stdio 代理。它在调用转发前检查本地登记的工具、参数、路径、网络目标及有限的凭证表示，适合研究和小范围集成验证。
 
-项目使用 Python 3.10+ 标准库，采用 [Apache-2.0 许可证](LICENSE)。0.2 改变了 0.1 的 API 和功能边界，已有调用方请先阅读[迁移说明](docs/migration_0_2.md)。
+核心运行时使用 Python 3.10+ 标准库，采用 [Apache-2.0 许可证](LICENSE)。独立客户端互操作验证另有锁定的 Node、Python SDK 测试依赖。0.2 改变了 0.1 的 API 和功能边界，已有调用方请先阅读[迁移说明](docs/migration_0_2.md)。
 
 ## 能做什么
 
@@ -37,7 +37,7 @@ python -X utf8 -m agent_immunity.benchmark.run_evaluation --output artifacts/ben
 
 测试包含独立客户端、代理和上游进程，使用临时目录中的实际文件与 `127.0.0.1` HTTP 接收器观察副作用。受限宿主若禁止回环连接，网络测试会失败；这不能当成代理成功拦截的证据。符号链接用例会在宿主不允许创建链接时明确跳过。
 
-从源码运行无需安装依赖。需要安装到当前 Python 环境时可执行 `python -m pip install .`；这不表示 0.2 已在包索引发布。
+核心代理和标准库测试从源码运行无需安装额外依赖。需要安装到当前 Python 环境时可执行 `python -m pip install .`；这不表示 0.2 已在包索引发布。
 
 ## 启动 MCP 示例
 
@@ -50,6 +50,12 @@ python -m agent_immunity.mcp_stdio --policy examples/policy.json -- python ../lo
 代理将上游工作目录设为策略指定的 `examples/workspace`，因此示例的 `../local_tools.py` 相对该目录解析。策略和上游脚本位于工具可写工作区之外。真实集成宜使用 Python、策略和上游脚本的绝对路径。
 
 该命令会等待 MCP 客户端从 stdin 输入协议消息；没有输出并不表示挂起。stdout 只用于逐行 JSON-RPC。初始化流程、手工请求示例与支持范围见 [MCP 接入说明](docs/mcp_integration.md)。
+
+## 官方客户端端到端场景
+
+[互操作验证指南](docs/interop.md)提供固定版本的 MCP Inspector 2.14.0 `mcpdo` 客户端与官方 Python SDK 1.30.0 上游：在同一个持久连接中读取项目资料、计算汇总、写入并重新读取报告，再实际发布到本地 HTTP 接收器。还验证越权、已知凭证传递、工具错误、超时后的新会话及独立 SDK 取消链。
+
+此入口使用 Python 3.12、Node 24.22.1 和单独锁定依赖；不修改全局客户端配置。结果保存在 `artifacts/interop/report.json`，实际业务产物为 `artifacts/interop/status-report.md`。报告公开保留“重连后旧凭证状态未继承”的已知漏检。流程没有调用 LLM，不代表模型规划评测或其他客户端宿主的兼容性。
 
 ## 证据如何解读
 
@@ -70,6 +76,7 @@ python -m agent_immunity.mcp_stdio --policy examples/policy.json -- python ../lo
 
 - [架构、策略字段与 Python API](docs/architecture.md)
 - [MCP 接入及协议范围](docs/mcp_integration.md)
+- [官方 Inspector 与独立 SDK 的端到端验证](docs/interop.md)
 - [基准和验证方法](docs/benchmark_guide.md)
 - [安全边界与问题报告](SECURITY.md)
 - [0.1 到 0.2 迁移](docs/migration_0_2.md)
