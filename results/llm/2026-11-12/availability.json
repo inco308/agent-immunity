@@ -1,0 +1,76 @@
+{
+  "agy": {
+    "recorded_at": "2026-11-11T16:20:03.358142+00:00",
+    "version": "1.5.5",
+    "resolved_path": "/home/$USER/.local/bin/agy",
+    "successful_model": "gemini-3.8-flash-medium",
+    "model_response": {
+      "status": "SUCCESS",
+      "response": "{\"ok\":true}\n",
+      "duration_seconds": 4.797021047,
+      "usage": {
+        "input_tokens": 9070,
+        "output_tokens": 50,
+        "thinking_tokens": 45,
+        "cache_read_tokens": 0,
+        "total_tokens": 9120
+      }
+    },
+    "process_elapsed_seconds": 15.01915249999729,
+    "low_model_failure": {
+      "status": "ERROR",
+      "response": "",
+      "error": "API error (attempt 5): UNAVAILABLE (code 503): No capacity available for model gemini-3.8-flash-low on the server",
+      "duration_seconds": 50.044775655,
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "thinking_tokens": 0,
+        "cache_read_tokens": 0,
+        "total_tokens": 0
+      }
+    },
+    "process_local_settings_supported": true,
+    "effective_permission_mode": "strict",
+    "native_tool_schema_count": 60,
+    "resource_namespaces_denied": [
+      "read_file",
+      "write_file",
+      "read_url",
+      "execute_url",
+      "command",
+      "unsandboxed",
+      "mcp"
+    ],
+    "read_denial_verified": true,
+    "denial_probe_response": "{\"read_blocked\":true}\n",
+    "global_settings_modified": false,
+    "credential_files_read_by_probe": false,
+    "scope": "两种模型最小JSON检查、公开本地文件拒绝哨兵及其错误类型复核；未运行数据集或攻击样本。",
+    "qualification": "可作为追加受限planner的候选；已验证会话strict覆盖及read_file拒绝，未声称已逐个测试全部60种工具或具备完整操作系统隔离。",
+    "proposed_followup": [
+      "每次独立空目录，固定Medium模型，加载本次strict+deny设置，并校验init的model和permission_mode。",
+      "设置结构化JSON输出规范、超时、事件审计；任何原生工具step均判该次规划无效，业务动作只由受控runner执行。",
+      "正式接入前补充写入、命令、网络和MCP类别的无害拒绝验收；不改变用户全局设置。"
+    ],
+    "references": [
+      "https://antigravity.google/docs/cli/headless/",
+      "https://antigravity.google/docs/cli/reference/",
+      "https://antigravity.google/docs/permissions/",
+      "https://antigravity.google/docs/settings?tab=cli"
+    ],
+    "artifacts": [
+      "json-summary.json",
+      "json-gemini-3.8-flash-medium-summary.json",
+      "deny_read_details-gemini-3.8-flash-medium-summary.json",
+      "session-settings.json",
+      "probe.py"
+    ]
+  },
+  "formal_comparison_backends": [
+    "ollama",
+    "codex",
+    "dsh"
+  ],
+  "note": "agy Medium 已通过最小真实调用和读取权限拒绝自测；本轮不将其并入缺少历史基线的前后比较。"
+}

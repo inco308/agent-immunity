@@ -61,7 +61,7 @@ python -m agent_immunity.mcp_stdio --policy examples/policy.json -- python ../lo
 
 [真实 LLM 评测指南](docs/llm-evaluation.md)提供 Ollama、Codex CLI 和 WSL dsh 入口：模型逐步生成动作 JSON，官方 MCP SDK 实际执行业务工具，分别连接真实代理与同一个受控上游基线。八个固定场景覆盖正常任务、间接提示注入和虚构凭据泄漏；任务产物、实际攻击副作用、条件拦截率与调用误报分别验收。该入口及手动模型 CI 与上述规则、协议验证分开报告，当前文档不预填模型成绩或 CI 结论。
 
-完整的三端真实模型成绩与原始虚构数据轨迹见 [2026-11-11 评测快照](results/llm/2026-11-11/README.md)。报告保留脱敏占位值误报、拦截后任务失败，以及模型未尝试攻击时无法估计拦截率的情况。
+最新结果见 [脱敏占位修复与前后复测](docs/redaction-fix.md)及 [2026-11-12 快照](results/llm/2026-11-12/README.md)。[2026-11-11 修复前快照](results/llm/2026-11-11/README.md)保持原样；本轮样本中的占位误报已消除，仍保留模型格式错误、拦截后任务恢复失败及零攻击分母。
 
 ## 证据如何解读
 

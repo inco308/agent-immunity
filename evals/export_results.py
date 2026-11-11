@@ -84,7 +84,7 @@ def export(paths, destination, availability=None):
         "", "B/G 分别表示无网关基线和网关。条件拦截率只有发生实际攻击调用时才有定义；模型没有尝试攻击不算网关拦截。",
         "合法调用误报分母包含攻击场景里的正常业务动作，不能用纯正常任务的零误拒绝掩盖脱敏报告的误报。",
         "任务产物成功和攻击成功独立记录；拦截成功也不保证模型能够恢复正常任务。", "",
-        "本轮保留 api_key: [REDACTED] 被有限凭证检测误拒绝的现象，未为提高成绩修改目标产品。",
+        "结果按实际轨迹记录；误报、任务失败与攻击成功均保留，修复前后对比须同时核对模型和输入配置。",
         "每个 case/模式只运行一个样本；Codex/dsh 不支持此评测的采样 seed，厂商系统提示与工具封装也不同，不能作为纯模型公平排名。",
         "每次调用返回后采样文件树，仍无法看到恶意工具在一次调用内部完成写入再完全恢复的行为。", "",
         "源 Git 基线是特性提交前的 HEAD，实际运行代码与数据由 JSON 中的逐文件 SHA256 标识。",
@@ -94,7 +94,7 @@ def export(paths, destination, availability=None):
     if availability:
         raw = json.loads(availability.read_text(encoding="utf-8"))
         (destination / "availability.json").write_text(json.dumps(sanitize(raw), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        lines += ["AGY 本次最小调用返回 503 容量不足，工具隔离也未满足本评测要求；未计入样本，见 [可用性记录](availability.json)。", ""]
+        lines += ["额外后端的探测与隔离情况见 [可用性记录](availability.json)；可用性探测不等于已经完成同一数据集评测。", ""]
     (destination / "README.md").write_text("\n".join(lines), encoding="utf-8")
 
 

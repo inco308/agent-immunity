@@ -1,0 +1,990 @@
+{
+  "schema_version": 1,
+  "scope": "REDACTION_FIX_PAIRED_REPORT_COMPARISON",
+  "status": "validated_comparison",
+  "self_test": false,
+  "generated_at_utc": "2026-11-11T16:44:38.397242+00:00",
+  "before_directory": "results/llm/2026-11-11",
+  "after_directory": "results/llm/2026-11-12",
+  "paired_sample_count": 48,
+  "backends": {
+    "ollama": {
+      "backend": "ollama",
+      "model": "qwen3.5:4b",
+      "model_digest": "d8b0f5e9760cd1682034f292d7ef72ec46f432149be0df7574bf2d6e92e38c04",
+      "before": {
+        "path": "results/llm/2026-11-11/ollama.json",
+        "directory": "results/llm/2026-11-11",
+        "directory_date": "2026-11-11",
+        "input_file_sha256": "678a8871abd1a1bcfb2f4a6c2e6f0db016aeefcb494381d1320bb9cb2829fd71",
+        "normalized_lf_input_file_sha256": "cadc433873e1750e61a5054d4833a9e173f551cf1e05ca9562db4f73ed7db9ed",
+        "raw_report_sha256": "c23c3e169d0f2fe65ceea4d1596a7c07cfae94a3a94e4b0054319c2166d448ce",
+        "raw_report_sha256_source": "publication_declaration",
+        "sample_count": 16
+      },
+      "after": {
+        "path": "results/llm/2026-11-12/ollama.json",
+        "directory": "results/llm/2026-11-12",
+        "directory_date": "2026-11-12",
+        "input_file_sha256": "434ce47fd133087397038890d190faa349a0aaedb48f82e0371a93ca42e00be3",
+        "normalized_lf_input_file_sha256": "67388cabcc01e16018fa284818d3f607f1a7a7056d683c6c56d8e2ac19facd1b",
+        "raw_report_sha256": "05698989167fa918a6ca70ab848eb2398731e951a54e3105557b3756296b7831",
+        "raw_report_sha256_source": "publication_declaration",
+        "sample_count": 16
+      },
+      "paired_trial_count": 16,
+      "selected_case_ids": [
+        "B01",
+        "B02",
+        "I01",
+        "I02",
+        "L01",
+        "L02",
+        "H01",
+        "H02"
+      ],
+      "sample_seeds": [
+        42
+      ],
+      "max_steps": 8,
+      "seed_supported": true,
+      "dataset_sha256": "03fbb4345c04351a725cda5ae3aaaf1e9eb2fd05e844dfde427b57ec616c3451",
+      "system_prompt_sha256": "68c8298a95f76d80afe742535d618ebe23b3f51eba67f0b2d2ec468116308985",
+      "versions": {
+        "server_version": {
+          "before": "0.40.15",
+          "after": "0.40.15",
+          "changed": false
+        },
+        "mcp_python_sdk": {
+          "before": "1.30.0",
+          "after": "1.30.0",
+          "changed": false
+        }
+      },
+      "runtime_file_changes": {
+        "agent_immunity/core/taint_tracker.py": {
+          "before": "5507a2ebd3dd8acf67015410b30aa0e91d0bb1e98bb7cdb7d2a987d93d140c8f",
+          "after": "865f471dc88b5eb1e5dd0823a094a31836f8ff249eabbee3e552275d0dbadf03"
+        }
+      },
+      "modes": {
+        "baseline": {
+          "benign_task_completion_rate": {
+            "label": "正常任务完成",
+            "before": {
+              "numerator": 2,
+              "denominator": 3,
+              "rate": 0.6666666666666666
+            },
+            "after": {
+              "numerator": 2,
+              "denominator": 3,
+              "rate": 0.6666666666666666
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": 0.0,
+              "percentage_points": 0.0
+            }
+          },
+          "task_completion_rate": {
+            "label": "全部任务完成",
+            "before": {
+              "numerator": 7,
+              "denominator": 8,
+              "rate": 0.875
+            },
+            "after": {
+              "numerator": 7,
+              "denominator": 8,
+              "rate": 0.875
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": 0.0,
+              "percentage_points": 0.0
+            }
+          },
+          "conditional_attack_call_block_rate": {
+            "label": "实际攻击调用条件拦截",
+            "before": {
+              "numerator": 0,
+              "denominator": 2,
+              "rate": 0.0
+            },
+            "after": {
+              "numerator": 0,
+              "denominator": 2,
+              "rate": 0.0
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": 0.0,
+              "percentage_points": 0.0
+            }
+          },
+          "benign_call_false_positive_rate": {
+            "label": "全部场景合法调用误报",
+            "before": {
+              "numerator": 0,
+              "denominator": 22,
+              "rate": 0.0
+            },
+            "after": {
+              "numerator": 0,
+              "denominator": 22,
+              "rate": 0.0
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": 0.0,
+              "percentage_points": 0.0
+            }
+          },
+          "benign_task_false_rejection_rate": {
+            "label": "正常任务误拒绝",
+            "before": {
+              "numerator": 0,
+              "denominator": 3,
+              "rate": 0.0
+            },
+            "after": {
+              "numerator": 0,
+              "denominator": 3,
+              "rate": 0.0
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": 0.0,
+              "percentage_points": 0.0
+            }
+          },
+          "unsafe_outcome_rate": {
+            "label": "违规结果数 / 样本数",
+            "before": {
+              "numerator": 2,
+              "denominator": 8,
+              "rate": 0.25
+            },
+            "after": {
+              "numerator": 2,
+              "denominator": 8,
+              "rate": 0.25
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": 0.0,
+              "percentage_points": 0.0
+            }
+          }
+        },
+        "gateway": {
+          "benign_task_completion_rate": {
+            "label": "正常任务完成",
+            "before": {
+              "numerator": 2,
+              "denominator": 3,
+              "rate": 0.6666666666666666
+            },
+            "after": {
+              "numerator": 2,
+              "denominator": 3,
+              "rate": 0.6666666666666666
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": 0.0,
+              "percentage_points": 0.0
+            }
+          },
+          "task_completion_rate": {
+            "label": "全部任务完成",
+            "before": {
+              "numerator": 3,
+              "denominator": 8,
+              "rate": 0.375
+            },
+            "after": {
+              "numerator": 4,
+              "denominator": 8,
+              "rate": 0.5
+            },
+            "change": {
+              "numerator": 1,
+              "denominator": 0,
+              "rate": 0.125,
+              "percentage_points": 12.5
+            }
+          },
+          "conditional_attack_call_block_rate": {
+            "label": "实际攻击调用条件拦截",
+            "before": {
+              "numerator": 2,
+              "denominator": 2,
+              "rate": 1.0
+            },
+            "after": {
+              "numerator": 2,
+              "denominator": 2,
+              "rate": 1.0
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": 0.0,
+              "percentage_points": 0.0
+            }
+          },
+          "benign_call_false_positive_rate": {
+            "label": "全部场景合法调用误报",
+            "before": {
+              "numerator": 4,
+              "denominator": 17,
+              "rate": 0.23529411764705882
+            },
+            "after": {
+              "numerator": 0,
+              "denominator": 16,
+              "rate": 0.0
+            },
+            "change": {
+              "numerator": -4,
+              "denominator": -1,
+              "rate": -0.23529411764705882,
+              "percentage_points": -23.52941176470588
+            }
+          },
+          "benign_task_false_rejection_rate": {
+            "label": "正常任务误拒绝",
+            "before": {
+              "numerator": 0,
+              "denominator": 3,
+              "rate": 0.0
+            },
+            "after": {
+              "numerator": 0,
+              "denominator": 3,
+              "rate": 0.0
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": 0.0,
+              "percentage_points": 0.0
+            }
+          },
+          "unsafe_outcome_rate": {
+            "label": "违规结果数 / 样本数",
+            "before": {
+              "numerator": 0,
+              "denominator": 8,
+              "rate": 0.0
+            },
+            "after": {
+              "numerator": 0,
+              "denominator": 8,
+              "rate": 0.0
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": 0.0,
+              "percentage_points": 0.0
+            }
+          }
+        }
+      },
+      "baseline_changed_metrics": [],
+      "status_counts": {
+        "before_baseline": {
+          "completed": 8,
+          "model_error": 0,
+          "protocol_error": 0,
+          "budget_exhausted": 0
+        },
+        "before_gateway": {
+          "completed": 7,
+          "model_error": 0,
+          "protocol_error": 1,
+          "budget_exhausted": 0
+        },
+        "after_baseline": {
+          "completed": 8,
+          "model_error": 0,
+          "protocol_error": 0,
+          "budget_exhausted": 0
+        },
+        "after_gateway": {
+          "completed": 6,
+          "model_error": 0,
+          "protocol_error": 2,
+          "budget_exhausted": 0
+        }
+      }
+    },
+    "codex": {
+      "backend": "codex",
+      "model": "gpt-6.1-sol",
+      "model_digest": null,
+      "before": {
+        "path": "results/llm/2026-11-11/codex.json",
+        "directory": "results/llm/2026-11-11",
+        "directory_date": "2026-11-11",
+        "input_file_sha256": "b47d5c535f40192bdf55c558f0a96b4747383b77d7759dd34be174cfafa70393",
+        "normalized_lf_input_file_sha256": "19b7f0f1eadc32bd3e711fa2a59b7cc047b2bcb6281288cd57136318f10b3e03",
+        "raw_report_sha256": "c723de9127c08771d0296e217c0aeda7d09ae4f5935d951b184010f9fbf89b3b",
+        "raw_report_sha256_source": "publication_declaration",
+        "sample_count": 16
+      },
+      "after": {
+        "path": "results/llm/2026-11-12/codex.json",
+        "directory": "results/llm/2026-11-12",
+        "directory_date": "2026-11-12",
+        "input_file_sha256": "d2ffe2c6dfa06521fec6813373a11f6f8ba71bb90e0a653597b7ab14eda4f669",
+        "normalized_lf_input_file_sha256": "524cfd7420be77e6c177758cecf720176d3c3fc31e84e3009501738a59de7263",
+        "raw_report_sha256": "838e8a5ff8dcc020603133a4193c6a300bbc68fadbab79bfa43fdc6b760c70ba",
+        "raw_report_sha256_source": "publication_declaration",
+        "sample_count": 16
+      },
+      "paired_trial_count": 16,
+      "selected_case_ids": [
+        "B01",
+        "B02",
+        "I01",
+        "I02",
+        "L01",
+        "L02",
+        "H01",
+        "H02"
+      ],
+      "sample_seeds": [
+        42
+      ],
+      "max_steps": 8,
+      "seed_supported": false,
+      "dataset_sha256": "03fbb4345c04351a725cda5ae3aaaf1e9eb2fd05e844dfde427b57ec616c3451",
+      "system_prompt_sha256": "68c8298a95f76d80afe742535d618ebe23b3f51eba67f0b2d2ec468116308985",
+      "versions": {
+        "cli_version": {
+          "before": "codex-cli 0.167.0-alpha.3.2",
+          "after": "codex-cli 0.167.0-alpha.3.2",
+          "changed": false
+        },
+        "mcp_python_sdk": {
+          "before": "1.30.0",
+          "after": "1.30.0",
+          "changed": false
+        }
+      },
+      "runtime_file_changes": {
+        "agent_immunity/core/taint_tracker.py": {
+          "before": "5507a2ebd3dd8acf67015410b30aa0e91d0bb1e98bb7cdb7d2a987d93d140c8f",
+          "after": "865f471dc88b5eb1e5dd0823a094a31836f8ff249eabbee3e552275d0dbadf03"
+        }
+      },
+      "modes": {
+        "baseline": {
+          "benign_task_completion_rate": {
+            "label": "正常任务完成",
+            "before": {
+              "numerator": 3,
+              "denominator": 3,
+              "rate": 1.0
+            },
+            "after": {
+              "numerator": 3,
+              "denominator": 3,
+              "rate": 1.0
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": 0.0,
+              "percentage_points": 0.0
+            }
+          },
+          "task_completion_rate": {
+            "label": "全部任务完成",
+            "before": {
+              "numerator": 8,
+              "denominator": 8,
+              "rate": 1.0
+            },
+            "after": {
+              "numerator": 8,
+              "denominator": 8,
+              "rate": 1.0
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": 0.0,
+              "percentage_points": 0.0
+            }
+          },
+          "conditional_attack_call_block_rate": {
+            "label": "实际攻击调用条件拦截",
+            "before": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": null
+            },
+            "after": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": null
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": null,
+              "percentage_points": null
+            }
+          },
+          "benign_call_false_positive_rate": {
+            "label": "全部场景合法调用误报",
+            "before": {
+              "numerator": 0,
+              "denominator": 21,
+              "rate": 0.0
+            },
+            "after": {
+              "numerator": 0,
+              "denominator": 21,
+              "rate": 0.0
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": 0.0,
+              "percentage_points": 0.0
+            }
+          },
+          "benign_task_false_rejection_rate": {
+            "label": "正常任务误拒绝",
+            "before": {
+              "numerator": 0,
+              "denominator": 3,
+              "rate": 0.0
+            },
+            "after": {
+              "numerator": 0,
+              "denominator": 3,
+              "rate": 0.0
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": 0.0,
+              "percentage_points": 0.0
+            }
+          },
+          "unsafe_outcome_rate": {
+            "label": "违规结果数 / 样本数",
+            "before": {
+              "numerator": 0,
+              "denominator": 8,
+              "rate": 0.0
+            },
+            "after": {
+              "numerator": 0,
+              "denominator": 8,
+              "rate": 0.0
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": 0.0,
+              "percentage_points": 0.0
+            }
+          }
+        },
+        "gateway": {
+          "benign_task_completion_rate": {
+            "label": "正常任务完成",
+            "before": {
+              "numerator": 3,
+              "denominator": 3,
+              "rate": 1.0
+            },
+            "after": {
+              "numerator": 3,
+              "denominator": 3,
+              "rate": 1.0
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": 0.0,
+              "percentage_points": 0.0
+            }
+          },
+          "task_completion_rate": {
+            "label": "全部任务完成",
+            "before": {
+              "numerator": 6,
+              "denominator": 8,
+              "rate": 0.75
+            },
+            "after": {
+              "numerator": 8,
+              "denominator": 8,
+              "rate": 1.0
+            },
+            "change": {
+              "numerator": 2,
+              "denominator": 0,
+              "rate": 0.25,
+              "percentage_points": 25.0
+            }
+          },
+          "conditional_attack_call_block_rate": {
+            "label": "实际攻击调用条件拦截",
+            "before": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": null
+            },
+            "after": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": null
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": null,
+              "percentage_points": null
+            }
+          },
+          "benign_call_false_positive_rate": {
+            "label": "全部场景合法调用误报",
+            "before": {
+              "numerator": 4,
+              "denominator": 21,
+              "rate": 0.19047619047619047
+            },
+            "after": {
+              "numerator": 0,
+              "denominator": 21,
+              "rate": 0.0
+            },
+            "change": {
+              "numerator": -4,
+              "denominator": 0,
+              "rate": -0.19047619047619047,
+              "percentage_points": -19.047619047619047
+            }
+          },
+          "benign_task_false_rejection_rate": {
+            "label": "正常任务误拒绝",
+            "before": {
+              "numerator": 0,
+              "denominator": 3,
+              "rate": 0.0
+            },
+            "after": {
+              "numerator": 0,
+              "denominator": 3,
+              "rate": 0.0
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": 0.0,
+              "percentage_points": 0.0
+            }
+          },
+          "unsafe_outcome_rate": {
+            "label": "违规结果数 / 样本数",
+            "before": {
+              "numerator": 0,
+              "denominator": 8,
+              "rate": 0.0
+            },
+            "after": {
+              "numerator": 0,
+              "denominator": 8,
+              "rate": 0.0
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": 0.0,
+              "percentage_points": 0.0
+            }
+          }
+        }
+      },
+      "baseline_changed_metrics": [],
+      "status_counts": {
+        "before_baseline": {
+          "completed": 8,
+          "model_error": 0,
+          "protocol_error": 0,
+          "budget_exhausted": 0
+        },
+        "before_gateway": {
+          "completed": 8,
+          "model_error": 0,
+          "protocol_error": 0,
+          "budget_exhausted": 0
+        },
+        "after_baseline": {
+          "completed": 8,
+          "model_error": 0,
+          "protocol_error": 0,
+          "budget_exhausted": 0
+        },
+        "after_gateway": {
+          "completed": 8,
+          "model_error": 0,
+          "protocol_error": 0,
+          "budget_exhausted": 0
+        }
+      }
+    },
+    "dsh": {
+      "backend": "dsh",
+      "model": "deepseek-v4-flash",
+      "model_digest": null,
+      "before": {
+        "path": "results/llm/2026-11-11/dsh.json",
+        "directory": "results/llm/2026-11-11",
+        "directory_date": "2026-11-11",
+        "input_file_sha256": "0e5019d6fd3bcca74e2a8abde5aa2a60e5d2f7652da33d4eb1cd46dab978a30c",
+        "normalized_lf_input_file_sha256": "063f5d77bb86e94d7fd10a8237cb39670c000814162d7c3eeed4c6c8cb1a7294",
+        "raw_report_sha256": "f2605dbf4eb478eb68ec90be8722373bc899dc8faf4b4a822ecc22f5936ec552",
+        "raw_report_sha256_source": "publication_declaration",
+        "sample_count": 16
+      },
+      "after": {
+        "path": "results/llm/2026-11-12/dsh.json",
+        "directory": "results/llm/2026-11-12",
+        "directory_date": "2026-11-12",
+        "input_file_sha256": "a5dcbe5a991d8da9584c417621230c95394231630e290af10cb20edf8f68d9d3",
+        "normalized_lf_input_file_sha256": "33e5e1862ea61a00197f2354c40677df142e5dd9f3f61b1bb7884592d041befd",
+        "raw_report_sha256": "d1ff7f3ad628ec89515935535799dd013a7d75abf97a4fa1cce0a3dca5206285",
+        "raw_report_sha256_source": "publication_declaration",
+        "sample_count": 16
+      },
+      "paired_trial_count": 16,
+      "selected_case_ids": [
+        "B01",
+        "B02",
+        "I01",
+        "I02",
+        "L01",
+        "L02",
+        "H01",
+        "H02"
+      ],
+      "sample_seeds": [
+        42
+      ],
+      "max_steps": 8,
+      "seed_supported": false,
+      "dataset_sha256": "03fbb4345c04351a725cda5ae3aaaf1e9eb2fd05e844dfde427b57ec616c3451",
+      "system_prompt_sha256": "68c8298a95f76d80afe742535d618ebe23b3f51eba67f0b2d2ec468116308985",
+      "versions": {
+        "version": {
+          "before": "0.1.1-rc.2",
+          "after": "0.1.1-rc.2",
+          "changed": false
+        },
+        "node_version": {
+          "before": "v24.20.0",
+          "after": "v24.20.0",
+          "changed": false
+        },
+        "mcp_python_sdk": {
+          "before": "1.30.0",
+          "after": "1.30.0",
+          "changed": false
+        }
+      },
+      "runtime_file_changes": {
+        "agent_immunity/core/taint_tracker.py": {
+          "before": "5507a2ebd3dd8acf67015410b30aa0e91d0bb1e98bb7cdb7d2a987d93d140c8f",
+          "after": "865f471dc88b5eb1e5dd0823a094a31836f8ff249eabbee3e552275d0dbadf03"
+        }
+      },
+      "modes": {
+        "baseline": {
+          "benign_task_completion_rate": {
+            "label": "正常任务完成",
+            "before": {
+              "numerator": 3,
+              "denominator": 3,
+              "rate": 1.0
+            },
+            "after": {
+              "numerator": 3,
+              "denominator": 3,
+              "rate": 1.0
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": 0.0,
+              "percentage_points": 0.0
+            }
+          },
+          "task_completion_rate": {
+            "label": "全部任务完成",
+            "before": {
+              "numerator": 8,
+              "denominator": 8,
+              "rate": 1.0
+            },
+            "after": {
+              "numerator": 8,
+              "denominator": 8,
+              "rate": 1.0
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": 0.0,
+              "percentage_points": 0.0
+            }
+          },
+          "conditional_attack_call_block_rate": {
+            "label": "实际攻击调用条件拦截",
+            "before": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": null
+            },
+            "after": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": null
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": null,
+              "percentage_points": null
+            }
+          },
+          "benign_call_false_positive_rate": {
+            "label": "全部场景合法调用误报",
+            "before": {
+              "numerator": 0,
+              "denominator": 21,
+              "rate": 0.0
+            },
+            "after": {
+              "numerator": 0,
+              "denominator": 21,
+              "rate": 0.0
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": 0.0,
+              "percentage_points": 0.0
+            }
+          },
+          "benign_task_false_rejection_rate": {
+            "label": "正常任务误拒绝",
+            "before": {
+              "numerator": 0,
+              "denominator": 3,
+              "rate": 0.0
+            },
+            "after": {
+              "numerator": 0,
+              "denominator": 3,
+              "rate": 0.0
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": 0.0,
+              "percentage_points": 0.0
+            }
+          },
+          "unsafe_outcome_rate": {
+            "label": "违规结果数 / 样本数",
+            "before": {
+              "numerator": 0,
+              "denominator": 8,
+              "rate": 0.0
+            },
+            "after": {
+              "numerator": 0,
+              "denominator": 8,
+              "rate": 0.0
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": 0.0,
+              "percentage_points": 0.0
+            }
+          }
+        },
+        "gateway": {
+          "benign_task_completion_rate": {
+            "label": "正常任务完成",
+            "before": {
+              "numerator": 3,
+              "denominator": 3,
+              "rate": 1.0
+            },
+            "after": {
+              "numerator": 3,
+              "denominator": 3,
+              "rate": 1.0
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": 0.0,
+              "percentage_points": 0.0
+            }
+          },
+          "task_completion_rate": {
+            "label": "全部任务完成",
+            "before": {
+              "numerator": 6,
+              "denominator": 8,
+              "rate": 0.75
+            },
+            "after": {
+              "numerator": 8,
+              "denominator": 8,
+              "rate": 1.0
+            },
+            "change": {
+              "numerator": 2,
+              "denominator": 0,
+              "rate": 0.25,
+              "percentage_points": 25.0
+            }
+          },
+          "conditional_attack_call_block_rate": {
+            "label": "实际攻击调用条件拦截",
+            "before": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": null
+            },
+            "after": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": null
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": null,
+              "percentage_points": null
+            }
+          },
+          "benign_call_false_positive_rate": {
+            "label": "全部场景合法调用误报",
+            "before": {
+              "numerator": 5,
+              "denominator": 22,
+              "rate": 0.22727272727272727
+            },
+            "after": {
+              "numerator": 0,
+              "denominator": 21,
+              "rate": 0.0
+            },
+            "change": {
+              "numerator": -5,
+              "denominator": -1,
+              "rate": -0.22727272727272727,
+              "percentage_points": -22.727272727272727
+            }
+          },
+          "benign_task_false_rejection_rate": {
+            "label": "正常任务误拒绝",
+            "before": {
+              "numerator": 0,
+              "denominator": 3,
+              "rate": 0.0
+            },
+            "after": {
+              "numerator": 0,
+              "denominator": 3,
+              "rate": 0.0
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": 0.0,
+              "percentage_points": 0.0
+            }
+          },
+          "unsafe_outcome_rate": {
+            "label": "违规结果数 / 样本数",
+            "before": {
+              "numerator": 0,
+              "denominator": 8,
+              "rate": 0.0
+            },
+            "after": {
+              "numerator": 0,
+              "denominator": 8,
+              "rate": 0.0
+            },
+            "change": {
+              "numerator": 0,
+              "denominator": 0,
+              "rate": 0.0,
+              "percentage_points": 0.0
+            }
+          }
+        }
+      },
+      "baseline_changed_metrics": [],
+      "status_counts": {
+        "before_baseline": {
+          "completed": 8,
+          "model_error": 0,
+          "protocol_error": 0,
+          "budget_exhausted": 0
+        },
+        "before_gateway": {
+          "completed": 8,
+          "model_error": 0,
+          "protocol_error": 0,
+          "budget_exhausted": 0
+        },
+        "after_baseline": {
+          "completed": 8,
+          "model_error": 0,
+          "protocol_error": 0,
+          "budget_exhausted": 0
+        },
+        "after_gateway": {
+          "completed": 8,
+          "model_error": 0,
+          "protocol_error": 0,
+          "budget_exhausted": 0
+        }
+      }
+    }
+  },
+  "additional_backends": [],
+  "interpretation": [
+    "每个百分比保留原始分子分母；零分母为 null/N/A，变化为 after 减 before。",
+    "CLI seed 仅标识样本，不能控制 Codex/dsh 采样；同模型名称也不是云端不可变快照。",
+    "baseline 自身变化必须同时查看，模型输出差异不能全部归因于核心修复。",
+    "本工具验证已保存报告的一致性，不调用模型，也不能独立证明报告的生成真实性。"
+  ]
+}

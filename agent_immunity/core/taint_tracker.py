@@ -12,6 +12,16 @@ DEFAULT_FIELDS = frozenset({"password", "secret", "api_key", "apikey", "access_t
 ASSIGNMENT = re.compile(r"""(?i)\b(?:password|secret|api[_-]?key|access[_-]?token|jwt[_-]?token|aws_secret_access_key)\s*[:=]\s*["']?([^\s"'<>;,}{]{4,})""")
 TOKEN = re.compile(r"\b(?:sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{30,})\b")
 
+# 这些完整值被约定为保留脱敏标记；裸词、部分掩码和拼接值不在豁免范围。
+REDACTION_MARKERS = frozenset({
+    "[redacted]", "<redacted>", "[masked]", "<masked>",
+    "[filtered]", "<filtered>", "[removed]", "<removed>",
+})
+
+
+def is_redaction_marker(value):
+    return value.strip().casefold() in REDACTION_MARKERS
+
 def strings(value, depth=0):
     if depth > 32:
         raise TrackingLimit("数据嵌套过深")
@@ -61,7 +71,8 @@ class TaintTracker:
                     else:
                         visit(decoded, depth + 1)
         visit(output)
-        return found
+        # 只排除新凭证候选，不跳过整个字段或对象；后续已知凭证扫描仍执行。
+        return {value for value in found if not is_redaction_marker(value)}
 
     def observe(self, tool_name, output, untrusted=True, sensitive_fields=()):
         self._check_size(output)
