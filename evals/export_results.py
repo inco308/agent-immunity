@@ -52,6 +52,10 @@ def export(paths, destination, availability=None):
             "synthetic_data_only": True,
             "local_path_identity_redacted": True,
             "source_base_commit_note": "Git 基线在特性提交之前；runtime_file_sha256 标识实际评测代码与输入。",
+            "normalized_lf_source_sha256": {
+                name: hashlib.sha256((REPO / name).read_text(encoding="utf-8").replace("\r\n", "\n").encode("utf-8")).hexdigest()
+                for name in provenance["runtime_file_sha256"]
+            },
         }
         name = report["backend"]["backend"].replace("_cli", "")
         (destination / f"{name}.json").write_text(json.dumps(published, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -84,7 +88,8 @@ def export(paths, destination, availability=None):
         "每个 case/模式只运行一个样本；Codex/dsh 不支持此评测的采样 seed，厂商系统提示与工具封装也不同，不能作为纯模型公平排名。",
         "每次调用返回后采样文件树，仍无法看到恶意工具在一次调用内部完成写入再完全恢复的行为。", "",
         "源 Git 基线是特性提交前的 HEAD，实际运行代码与数据由 JSON 中的逐文件 SHA256 标识。",
-        "手动 CI 的 0.8B 模型报告在 Actions artifact 中，必须与这里的本地 4B/云端 CLI 结果分开解读。", "",
+        "publication.normalized_lf_source_sha256 另提供统一 LF 行尾的源码摘要，便于与 Git 内容核对；运行时字节摘要仍原样保留。",
+        "手动 CI 的 4B 模型仅运行三场景 CPU 子集，报告在 Actions artifact 中，必须与这里的本地八场景/云端 CLI 结果分开解读。", "",
     ]
     if availability:
         raw = json.loads(availability.read_text(encoding="utf-8"))

@@ -15,15 +15,15 @@ import urllib.request
 
 
 REPO = Path(__file__).resolve().parents[1]
-MODEL = "qwen3.5:0.8b"
+MODEL = "qwen3.5:4b"
 VERSION = "0.40.15"
 # 2026-11-11 从官方 registry manifest 原始响应计算，并非模型权重层摘要。
-MODEL_DIGEST = "de63045f29755d4721c09d54c9b45c2dadb644f4fd7d604d4cac90d96049971c"
-MANIFEST_URL = "https://registry.ollama.ai/v2/library/qwen3.5/manifests/0.8b"
+MODEL_DIGEST = "d8b0f5e9760cd1682034f292d7ef72ec46f432149be0df7574bf2d6e92e38c04"
+MANIFEST_URL = "https://registry.ollama.ai/v2/library/qwen3.5/manifests/4b"
 ARCHIVE_SHA256 = "628c018404a4206493efd38e46251c154ede5141b8b8dc85c659b3b027c47379"
 CASE_IDS = ("B02", "I01", "L01")
 MODES = ("baseline", "gateway")
-NOTE = "本报告仅为 CPU 上 qwen3.5:0.8b 的六次探索性评测，与本地 qwen3.5:4b 的结果分别记录，不合并统计。"
+NOTE = "本报告仅为 CPU 上 qwen3.5:4b 的六次子集评测，与本地八场景十六次评测及云端 CLI 的结果分别记录，不合并统计。"
 
 
 def request_json(endpoint, path, payload=None, timeout=10):
@@ -86,7 +86,7 @@ def write_ci_metadata(output, error=None):
         "expected_server_version": VERSION, "ollama_archive_sha256": ARCHIVE_SHA256,
         "model_tag_drift_is_failure": True, "case_ids": list(CASE_IDS),
         "modes": list(MODES), "seed": 42, "max_steps": 6, "request_timeout_seconds": 180,
-        "evaluation_timeout_seconds": 840, "scope_note": NOTE,
+        "evaluation_timeout_seconds": 1080, "scope_note": NOTE,
     }
     if error is not None:
         report["status"] = "failed"
@@ -186,7 +186,7 @@ def run(args):
                         "--max-steps", "6", "--request-timeout", "180", "--output", str(output),
                     ]
                     evaluator = subprocess.Popen(command, cwd=REPO, start_new_session=True)
-                    if evaluator.wait(timeout=840) != 0:
+                    if evaluator.wait(timeout=1080) != 0:
                         raise RuntimeError("真实模型评测进程返回失败")
                     validate_report(output)
                 finally:

@@ -45,8 +45,8 @@ jobs:
           tar --zstd --extract --file="$archive" --directory="$runtime"
           test -x "$runtime/bin/ollama"
           rm -- "$archive"
-      - name: 运行真实 0.8B 模型的三场景对照评测
-        timeout-minutes: 20
+      - name: 运行真实 4B 模型的三场景对照评测
+        timeout-minutes: 24
         shell: bash
         run: |
           set -euo pipefail
@@ -58,7 +58,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: llm-eval-ollama-qwen3.5-0.8b
+          name: llm-eval-ollama-qwen3.5-4b
           # 只上传指定报告和轨迹；不上传模型缓存、服务日志、登录信息或进程环境。
           path: |
             artifacts/llm-eval/ci.json

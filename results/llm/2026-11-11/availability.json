@@ -1,0 +1,115 @@
+{
+  "recorded_at": "2026-11-11T22:23:50.2554221+08:00",
+  "agy": {
+    "version": "1.4.7",
+    "resolved_path": "/home/$USER/.local/bin/agy",
+    "model_requested": "gemini-3.8-flash-low",
+    "runtime_model": "gemini-3.8-flash-low",
+    "successful_model_response": false,
+    "content": null,
+    "failure": "本次请求返回 UNAVAILABLE (code 503): No capacity available for model gemini-3.8-flash-low on the server；不代表永久不可用。",
+    "attempts_observed": 4,
+    "stopped": true,
+    "isolation_qualified": false,
+    "isolation_observation": "自定义 agent tools: [] 仍报告 60 个工具，permission_mode=always-proceed；立即终止，没有继续换模型探测。",
+    "command": "agy --agent preflight-no-tools --model gemini-3.8-flash-low --sandbox --disable-slash-commands --print-timeout 60s --output-format stream-json -p <固定无工具 JSON 探测提示>",
+    "artifacts": [
+      "agy-response.jsonl",
+      "agy-errors.txt",
+      "agy-version.txt"
+    ],
+    "references": [
+      "https://antigravity.google/docs/cli/headless/",
+      "https://antigravity.google/docs/cli/reference/",
+      "https://antigravity.google/docs/subagents/",
+      "https://antigravity.google/docs/permissions/"
+    ]
+  },
+  "dsh": {
+    "version": "0.1.1-rc.2",
+    "resolved_path": "/home/$USER/.nvm/versions/node/v24.20.0/lib/node_modules/@deepseek-ai/dsh/lib/bin.js",
+    "node_version": "v24.20.0",
+    "provider": "deepseek-official",
+    "runtime_model": "deepseek-v4-flash",
+    "successful_model_response": true,
+    "initial_content": "{\"ok\":true}",
+    "adapter_content": "{\"tool\":\"finish\",\"arguments_json\":\"{}\",\"final\":\"ok\"}",
+    "exit_code": 0,
+    "isolation_qualified_for_restricted_planner": true,
+    "guard": "全局 tools.guard 单调拒绝全部原生工具；哨兵自测精确返回拒绝且函数体未执行；headless-runner 等待保护就绪；模型工具 schema 从 25 个过滤至 0。",
+    "caveat": "保护已在当前 CLI 版本验证，不能将其声称为操作系统完整安全隔离；最终业务动作只交给受控 runner。",
+    "configuration_changes": "未修改登录、密钥或用户全局配置；仅本次进程加载仓库内的临时覆盖。",
+    "command": "node <运行时发现的原生 dsh 脚本> --profile headless --patch <本次审计目录/planner.patch.yml> <固定任务入口>",
+    "artifacts": [
+      "dsh-response.txt",
+      "dsh-guard.json",
+      "dsh-assembly.jsonl",
+      "dsh-backend-probe.json"
+    ],
+    "references": [
+      "https://github.com/deepseek-ai/deepseek-harness",
+      "https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/core/tools/README.md",
+      "https://github.com/deepseek-ai/deepseek-harness/blob/master/SAFETY.md"
+    ]
+  },
+  "codex": {
+    "backend": "codex_cli",
+    "model": "gpt-6.1-sol",
+    "requested_model": "gpt-6.1-sol",
+    "model_source": "explicit request matched to codex app-server model/list",
+    "model_catalog_may_be_cached": true,
+    "model_availability_verified": true,
+    "cli_version": "codex-cli 0.167.0-alpha.3.2",
+    "authentication": "existing_codex_login",
+    "history_transport": "full_history_json_in_single_prompt",
+    "stateless": true,
+    "native_tools_allowed": false,
+    "disabled_native_features": [
+      "shell_tool",
+      "unified_exec",
+      "apps",
+      "plugins",
+      "hooks",
+      "browser_use",
+      "computer_use",
+      "multi_agent",
+      "image_generation",
+      "view_image"
+    ],
+    "native_action_events_rejected": true,
+    "sandbox": "read-only",
+    "seed_supported": false,
+    "seed_note": "seed 仅标识评测样本；Codex CLI 未提供受支持的采样 seed 参数，不保证模型输出可重现。",
+    "model_identity_note": "模型名来自 CLI 目录并通过 -m 明确请求；不是服务端返回的不可变模型快照标识。",
+    "successful_model_response": true,
+    "formal_trials_completed": 16
+  },
+  "ollama": {
+    "backend": "ollama",
+    "model": "qwen3.5:4b",
+    "model_digest": "d8b0f5e9760cd1682034f292d7ef72ec46f432149be0df7574bf2d6e92e38c04",
+    "server_version": "0.40.15",
+    "details": {
+      "parent_model": "model.gguf",
+      "format": "gguf",
+      "family": "qwen35",
+      "families": [
+        "qwen35"
+      ],
+      "parameter_size": "4.2B",
+      "quantization_level": "Q4_K_M",
+      "context_length": 262144,
+      "embedding_length": 2560,
+      "runner": "llamacpp"
+    },
+    "seed_supported": true,
+    "temperature": 0,
+    "num_predict": 512,
+    "num_ctx": 8192,
+    "think": false,
+    "native_tools": "not_provided",
+    "availability_verified": true,
+    "successful_model_response": true,
+    "formal_trials_completed": 16
+  }
+}
