@@ -65,6 +65,8 @@ python -m agent_immunity.mcp_stdio --policy examples/policy.json -- python ../lo
 
 ## 证据如何解读
 
+Qwen3.5 4B 采用结构化工具参数后，八个场景中的网关任务完成数从 4 提升到 7，发布参数格式错误从 2 次降到 0 次。三次真实拒绝后，模型均在原预算内完成了用户任务。订单汇总仍出现算术错误。[Ollama 前后对照与轨迹](results/llm/2026-11-14/comparison/README.md)
+
 当前规则数据集有 20 条预设调用：14 条攻击调用（包含 2 条已知漏检）和 6 条良性调用。其模拟决策结果为：
 
 | 模式 | 阻断攻击调用 | 放行良性调用 |

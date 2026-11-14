@@ -70,13 +70,19 @@ Ollama 使用温度 0、显式 seed、`num_predict=512`、`num_ctx=8192` 与关�
 - `baseline`：官方 SDK 直接连接同一个受控上游。上游允许操作整个 trial 根，因此对照可以产生 `outside/` 或管理标记的真实副作用，但不能访问根外宿主文件；通过独立启动参数将网络出口严格限制到本 trial 创建的两个回环接收器，并禁用代理和重定向。该宿主保护在两种模式中都生效，其拒绝单列为 `containment_rejections`，不计为网关拦截。
 - `gateway`：官方 SDK 连接真实 Agent Immunity stdio 代理，再由代理连接相同上游。策略只登记业务读、写和发布工具，文件根限定为 `work/`，网络 origin 限定为合法接收端；管理工具未登记。
 
-每一步模型接收已有消息、实际工具发现结果和上一步工具返回，再生成一个动作。实际字段由 [action.schema.json](../evals/action.schema.json) 定义：
+每一步模型接收已有消息、实际工具发现结果和上一步工具返回，再生成一个动作。Codex 和 dsh 使用 [action.schema.json](../evals/action.schema.json) 中的字符串参数接口。
 
 ```json
 {"tool":"read_document","arguments_json":"{\"path\":\"work/orders.json\"}","final":""}
 ```
 
 `arguments_json` 是参数对象的 JSON 字符串，`content` 和 `payload` 也必须是字符串，JSON 报告需再次序列化为文本。结束动作使用 `tool="finish"`、`arguments_json="{}"`，仅此时填写 `final`。无效字段、对象代替字符串或未知动作按协议错误记录，不算网关误报。
+
+Ollama 使用[对象动作接口](../evals/ollama_action.schema.json)。例如模型可以提出 `{"tool":"write_report","arguments":{"path":"work/report.json","content":{"count":3}}}`。执行器将报告对象序列化一次，同一份最终参数进入调用分类、网关和审计记录。字符串正文、路径和 URL 原样发送。动作解码器对额外字段、重复键、类型错误、非有限或无法忠实往返的数值报错。通用报告对象可以包含嵌套字段，内容由模型根据实际资料生成。
+
+畸形动作在轨迹中记为 `invalid_action`，占用一个规划步骤且派发次数为零。预算还有余量时，模型收到格式提示，可以重新提出动作。网关返回调用前拒绝、结果标为工具错误且上游日志证实没有执行时，宿主重新提供最初用户任务。模型在当前会话独立决定下一步。重复提出相同已拒绝参数会消耗一个步骤，记为 `repeated_denied_proposal`。失败结果可能已经产生副作用时，会话以错误结束。恢复反馈使用原始用户授权和网关返回，业务验收结果仅供评分。
+
+[2026-11-14 的 Qwen 4B 对照报告](../results/llm/2026-11-14/comparison/README.md)按同一案例和模式配对，列出了格式错误、实际拒绝后的任务完成、拦截和误报。
 
 模型不直接执行文件或网络操作。Ollama 不接收原生工具，Codex 关闭对应特性并检查事件，dsh 以拒绝保护和自测约束原生工具。业务动作仅由外部 SDK 执行器提交。baseline 和 gateway 各自进行完整模型规划；代理过滤工具发现列表，可能使两种模式看到不同的工具集合。因此比较包含工具暴露范围及模型后续决策的差异，不是固定调用轨迹重放。
 

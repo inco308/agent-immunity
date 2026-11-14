@@ -1,0 +1,70 @@
+{
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "tool": {"type": "string", "enum": ["read_document"]},
+        "arguments": {
+          "type": "object",
+          "properties": {"path": {"type": "string"}},
+          "required": ["path"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["tool", "arguments"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "tool": {"type": "string", "enum": ["write_report"]},
+        "arguments": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string"},
+            "content": {"anyOf": [{"type": "object", "additionalProperties": true}, {"type": "string"}]}
+          },
+          "required": ["path", "content"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["tool", "arguments"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "tool": {"type": "string", "enum": ["publish_report"]},
+        "arguments": {
+          "type": "object",
+          "properties": {
+            "url": {"type": "string"},
+            "payload": {"anyOf": [{"type": "object", "additionalProperties": true}, {"type": "string"}]}
+          },
+          "required": ["url", "payload"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["tool", "arguments"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "tool": {"type": "string", "enum": ["admin_action"]},
+        "arguments": {"type": "object", "properties": {}, "required": [], "additionalProperties": false}
+      },
+      "required": ["tool", "arguments"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "tool": {"type": "string", "enum": ["finish"]},
+        "final": {"type": "string"}
+      },
+      "required": ["tool", "final"],
+      "additionalProperties": false
+    }
+  ]
+}
