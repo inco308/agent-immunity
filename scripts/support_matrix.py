@@ -3,7 +3,7 @@ import argparse
 import re
 import sys
 
-from .support_evidence import PLATFORMS, REPOSITORY, fetch_evidence
+from .support_evidence import NATIVE_TARGETS, PLATFORMS, REPOSITORY, fetch_evidence
 
 
 REPO_URL = f"https://github.com/{REPOSITORY}"
@@ -25,8 +25,9 @@ def by_name(items):
 
 def job_link(job, run, os_label, *required_steps):
     if (job["status"] != "completed" or job["conclusion"] != "success"
+            or type(job["run_id"]) is not int or job["run_id"] != run
             or os_label not in job["labels"] or type(job["id"]) is not int or job["id"] <= 0):
-        raise ValueError("作业平台或成功状态不符")
+        raise ValueError("作业运行编号、平台或成功状态不符")
     steps = by_name([step for step in job["steps"] if step["name"] in required_steps])
     for name in required_steps:
         step = steps.get(name, {})
@@ -55,15 +56,56 @@ def inspector_row(report, job, run, system):
     return f"| Inspector 互操作 | {env} | {components} | MCP {protocol} 握手、文件读写和回环 HTTP 发布 | {evidence} |"
 
 
+def native_environment(name, host):
+    """按作业约定核对宿主与三个独立解释器，从实际观测值生成环境列。"""
+    windows = name == "lifecycle-windows-x64"
+    system, arch, machine = ("Windows", "x64", "AMD64") if windows else ("Darwin", "arm64", "arm64")
+    os_version = host["os_version"]
+    os_pattern = r"10\.0\.[0-9]+(?:\.[0-9]+)?" if windows else r"15\.[0-9]+(?:\.[0-9]+)?"
+    if host["system"] != system or host["codex_arch"] != arch or not re.fullmatch(os_pattern, os_version):
+        raise ValueError("原生 Codex 的系统、版本或可执行文件架构与作业不符")
+    patches = []
+    for role in ("gateway", "previous", "candidate"):
+        python = host["pythons"][role]
+        if (python["implementation"] != "CPython" or python["machine"] != machine
+                or not re.fullmatch(r"3\.12\.[0-9]+", python["version"])
+                or (windows and python["python_platform"] != "win-amd64")):
+            raise ValueError(f"原生作业的 {role} 解释器证据不完整或不符")
+        patches.append(python["version"])
+    python_text = patches[0] if len(set(patches)) == 1 else (
+        f"网关 {patches[0]}、初始上游 {patches[1]}、候选上游 {patches[2]}"
+    )
+    os_name = "Windows 内部版本" if windows else "macOS"
+    return f"{os_name} {os_version} {arch} · CPython {python_text}"
+
+
 def codex_row(report, job, run):
-    if (job["name"] != "lifecycle" or report["schema_version"] != 1
+    if (type(report["schema_version"]) is not int or report["schema_version"] != 1
             or report["scope"] != "CODEX_MCP_LIFECYCLE" or report["status"] != "passed"
             or [stage["phase"] for stage in report["stages"]] != ["install", "upgrade", "rollback"]):
         raise ValueError("需要 Codex 宿主完整的初装、升级和回退报告")
     systems = [label for label in job["labels"] if re.fullmatch(r"(?:ubuntu|windows|macos)-[a-z0-9.]+", label)]
     if len(systems) != 1:
         raise ValueError("无法确定 Codex 作业平台")
-    evidence = job_link(job, run, systems[0], "Codex 宿主安装、升级和回退")
+    system = systems[0]
+    environment = f"`{system}`"
+    steps = ["Codex 宿主安装、升级和回退"]
+    name = job["name"]
+    if name == "lifecycle":
+        if not system.startswith("ubuntu-") or report.get("host_environment", {}).get("system", "Linux") != "Linux":
+            raise ValueError("基础 lifecycle 作业与 Linux 宿主证据不符")
+    else:
+        if name not in NATIVE_TARGETS or system != NATIVE_TARGETS[name][0]:
+            raise ValueError("原生宿主作业名与运行器标签不符")
+        arch_steps = {"核对原生宿主的三阶段证据"}
+        if name == "lifecycle-macos-arm64":
+            arch_steps.add("核对 macOS 15 原生宿主的三阶段证据")
+        observed_steps = [s["name"] for s in job["steps"] if s["name"] in arch_steps]
+        if not observed_steps:
+            raise ValueError("缺少原生宿主架构验收步骤")
+        steps.extend(observed_steps)
+        environment += " · " + native_environment(name, report["host_environment"])
+    evidence = job_link(job, run, system, *steps)
     upstreams = report["upstreams"]
     previous = version(upstreams["previous"]["installed_version"])
     candidate = version(upstreams["candidate"]["installed_version"])
@@ -84,11 +126,11 @@ def codex_row(report, job, run):
     if not codex.startswith("codex-cli "):
         raise ValueError("报告缺少实际 Codex CLI 版本")
     components = f"Codex CLI {version(codex.removeprefix('codex-cli '))} · Python SDK {version(report['mcp_sdk'])}"
-    return (f"| 编码宿主试点 | `{systems[0]}` | {components} | mcp-server-time "
+    return (f"| 编码宿主试点 | {environment} | {components} | mcp-server-time "
             f"{previous} → {candidate} → {previous}，三阶段时区转换与重复调用拒绝 | {evidence} |")
 
 
-def render_matrix(commit, verify_run, pilot_run, verify_jobs, interop_reports, pilot_job, pilot_report):
+def render_matrix(commit, verify_run, pilot_run, verify_jobs, interop_reports, pilot_job, pilot_report, native_pilots=()):
     if (not isinstance(commit, str) or not re.fullmatch(r"[a-f0-9]{40}", commit)
             or not all(type(run) is int and run > 0 for run in (verify_run, pilot_run))):
         raise ValueError("需指定完整的小写提交 SHA 和两个正整数运行编号")
@@ -109,8 +151,17 @@ def render_matrix(commit, verify_run, pilot_run, verify_jobs, interop_reports, p
             rows.append(f"| 核心包安装 | `{system}` · Python {python} | wheel 和 sdist | 各自在新环境安装，运行策略体检、基准和代理 ping | {evidence} |")
         for system in PLATFORMS:
             rows.append(inspector_row(interop_reports[system], jobs[f"interop ({system})"], verify_run, system))
+        if pilot_job["name"] != "lifecycle":
+            raise ValueError("缺少基础 Linux 宿主作业")
         rows.append(codex_row(pilot_report, pilot_job, pilot_run))
         gateway = version(pilot_report["gateway_version"])
+        seen = set()
+        for job, report in native_pilots:
+            name = job["name"]
+            if name not in NATIVE_TARGETS or name in seen or report["gateway_version"] != gateway:
+                raise ValueError("原生宿主作业重复、未知或网关版本与矩阵不符")
+            seen.add(name)
+            rows.append(codex_row(report, job, pilot_run))
     except (KeyError, TypeError, AttributeError) as exc:
         raise ValueError("作业或报告缺少生成矩阵所需的字段") from exc
     return "\n".join([

@@ -12,6 +12,10 @@ REPOSITORY = "inco308/agent-immunity"
 REPOSITORY_ID = 1381124176
 RUNS_API = f"repos/{REPOSITORY}/actions/runs"
 PLATFORMS = ("ubuntu-latest", "windows-latest")
+NATIVE_TARGETS = {
+    "lifecycle-macos-arm64": ("macos-15", "codex-time-lifecycle-macos-arm64"),
+    "lifecycle-windows-x64": ("windows-2025", "codex-time-lifecycle-windows-x64"),
+}
 
 
 class _NetworkError(ValueError):
@@ -115,12 +119,21 @@ def fetch_evidence(commit, verify_run, pilot_run):
     for run_id, workflow in workflows:
         _verify_run(commit, run_id, workflow)
     verify_jobs = _jobs(commit, verify_run)
-    pilot_jobs = [job for job in _jobs(commit, pilot_run) if job.get("name") == "lifecycle"]
-    if len(pilot_jobs) != 1 or not _matches(pilot_jobs[0], {"status": "completed", "conclusion": "success"}):
-        raise ValueError("Codex 试点缺少唯一成功的 lifecycle 作业")
+    pilot_jobs = {}
+    for job in _jobs(commit, pilot_run):
+        name = job.get("name")
+        if not isinstance(name, str) or (name != "lifecycle" and name not in NATIVE_TARGETS):
+            continue
+        if name in pilot_jobs or not _matches(job, {"status": "completed", "conclusion": "success"}):
+            raise ValueError(f"Codex 试点需要唯一且成功的 {name} 作业")
+        pilot_jobs[name] = job
+    if "lifecycle" not in pilot_jobs:
+        raise ValueError("Codex 试点缺少 lifecycle 作业")
     interop = {platform: _report(verify_run, f"interop-{platform}") for platform in PLATFORMS}
     pilot = _report(pilot_run, "codex-time-lifecycle")
+    native_pilots = [(pilot_jobs[name], _report(pilot_run, artifact))
+                     for name, (_, artifact) in NATIVE_TARGETS.items() if name in pilot_jobs]
     # 产物绑定运行编号。下载期间若已开始重跑，不能把它归入曾成功的第一次尝试。
     for run_id, workflow in workflows:
         _verify_run(commit, run_id, workflow)
-    return verify_jobs, interop, pilot_jobs[0], pilot
+    return verify_jobs, interop, pilot_jobs["lifecycle"], pilot, native_pilots

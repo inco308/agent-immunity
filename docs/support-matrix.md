@@ -33,3 +33,16 @@ python -X utf8 -m scripts.support_matrix --commit 7328ca6949dcade4bbf186c827c3ee
 ```
 
 更新快照时，选择同一完整 `main` 提交的 `verify` 和 `codex-time-pilot` 两次 push 运行。生成器核对仓库、提交、工作流、作业及关键步骤，再读取两个平台的 Inspector 报告和 Codex 三阶段报告。产物只绑定运行编号，因而生成器要求两次运行都在首次尝试成功。预检、未完成的回退或过期缺失的报告会使命令返回非零。表下方的系统镜像、架构和补丁版本来自原作业日志，更新快照时也应重新核对。[生成器](../scripts/support_matrix.py)
+
+### 加入原生编码宿主
+
+生成器按该次运行实际包含的作业取证。历史运行只有 `lifecycle` 时，仍只生成 Linux 宿主行。原生作业出现时，生成器读取同一运行中对应的 `report.json`。
+
+| 原生作业 | 运行器标签 | 独立产物 |
+| --- | --- | --- |
+| `lifecycle-macos-arm64` | `macos-15` | `codex-time-lifecycle-macos-arm64` |
+| `lifecycle-windows-x64` | `windows-2025` | `codex-time-lifecycle-windows-x64` |
+
+每个新增的宿主行都需要该作业的架构检查通过。生成器核对实际系统版本、Codex 可执行文件架构、网关和两个上游的 CPython 3.12 观测值，再检查同一报告中的安装、升级、回退、业务转换及策略拒绝。Windows 还要核对三个解释器均为 `win-amd64`。三个补丁版本相同时合并显示，有差异时按角色分别列出。
+
+存在原生作业但产物过期、平台错配或回退验证不完整时，本次生成失败。PR 报告可用于测试生成器，正式快照须等包含这些作业的同一 `main` 提交通过验收后再更新。
