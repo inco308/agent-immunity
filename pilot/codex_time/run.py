@@ -36,11 +36,15 @@ def atomic_write(path, data):
         temporary.unlink(missing_ok=True)
 
 
-def config_bytes(gateway, policy, upstream):
+def registration(gateway, policy, upstream):
     args = ["-I", "-m", "agent_immunity.mcp_stdio", "--policy", str(policy), "--timeout", "15",
             "--", upstream, "-I", "-m", "mcp_server_time", "--local-timezone", "UTC"]
-    return (f"[mcp_servers.{SERVER_NAME}]\ncommand = {json.dumps(gateway, ensure_ascii=False)}\n"
-            f"args = {json.dumps(args, ensure_ascii=False)}\nstartup_timeout_sec = 25\n").encode("utf-8")
+    return {"command": gateway, "args": args}
+
+
+def config_bytes(target):
+    return (f"[mcp_servers.{SERVER_NAME}]\ncommand = {json.dumps(target['command'], ensure_ascii=False)}\n"
+            f"args = {json.dumps(target['args'], ensure_ascii=False)}\n").encode("utf-8")
 
 
 def run_command(args, cwd):
@@ -48,10 +52,8 @@ def run_command(args, cwd):
                           stdout=subprocess.PIPE).stdout
 
 
-def register(binary, config, cwd):
+def register(binary, target, cwd):
     """通过 Codex 自身的 CLI 激活所选版本，并回读宿主保存的配置。"""
-    import tomllib  # 试点环境使用 Python 3.12
-    target = tomllib.loads(config.decode("utf-8"))["mcp_servers"][SERVER_NAME]
     run_command([binary, "mcp", "add", SERVER_NAME, "--", target["command"], *target["args"]], cwd)
     saved = json.loads(run_command([binary, "mcp", "get", SERVER_NAME, "--json"], cwd))
     transport = saved.get("transport") or {}
@@ -129,16 +131,17 @@ def run(args):
             if not isinstance(existing, list) or existing:
                 raise ValueError("一次性宿主演练需要空的 MCP 注册表")
             temporary_registration = True
-            original = config_bytes(environment["gateway"], policy, environment["previous"])
-            upgrade = config_bytes(environment["gateway"], policy, environment["candidate"])
+            original = registration(environment["gateway"], policy, environment["previous"])
+            upgrade = registration(environment["gateway"], policy, environment["candidate"])
             if original == upgrade:
                 raise ValueError("前后版本必须安装在不同环境")
-            for phase, slot, config in (("install", "previous", original), ("upgrade", "candidate", upgrade),
+            for phase, slot, target in (("install", "previous", original), ("upgrade", "candidate", upgrade),
                                         ("rollback", "previous", original)):
                 report["attempted_phase"] = phase
                 started = time.monotonic()
+                config = config_bytes(target)
                 atomic_write(active, config)
-                register(executable, active.read_bytes(), root)
+                register(executable, target, root)
                 result = host_stage(executable, project, expect_weekday=slot == "candidate")
                 if active.read_bytes() != config:
                     raise RuntimeError("宿主配置在演练过程中被改变")
