@@ -3,7 +3,9 @@ import argparse
 import hashlib
 import json
 import os
+import platform
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -53,6 +55,27 @@ def run_command(args, cwd):
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
 
 
+def macos_host_environment(executable, environment, root):
+    """在运行宿主前核对所选原生二进制和三个实际使用的 Python 解释器。"""
+    if platform.system() != "Darwin":
+        raise ValueError("Apple Silicon 宿主演练需要在 macOS 运行")
+    os_version = platform.mac_ver()[0]
+    arch = run_command(["/usr/bin/lipo", "-archs", executable], root).strip()
+    if not os_version or arch != "arm64":
+        raise ValueError("需要选择锁定 npm 包中仅含 arm64 的 Codex 原生程序")
+    probe = ("import json, platform; print(json.dumps(dict(implementation=platform.python_implementation(), "
+             "version=platform.python_version(), machine=platform.machine())))")
+    pythons = {}
+    for role in ("gateway", "previous", "candidate"):
+        observed = json.loads(run_command([environment[role], "-I", "-c", probe], root))
+        if (not isinstance(observed, dict) or observed.get("implementation") != "CPython"
+                or observed.get("machine") != "arm64" or not isinstance(observed.get("version"), str)
+                or not re.fullmatch(r"3\.12\.[0-9]+", observed["version"])):
+            raise ValueError(f"{role} 环境需要原生 arm64 CPython 3.12")
+        pythons[role] = {key: observed[key] for key in ("implementation", "version", "machine")}
+    return {"system": "Darwin", "os_version": os_version, "codex_arch": arch, "pythons": pythons}
+
+
 def verify_registration(binary, target, project):
     """回读 Codex 本次进程解析出的命令和参数，再启动业务验收。"""
     command = configured_command(binary, project, "mcp", "get", SERVER_NAME, "--json")
@@ -92,6 +115,10 @@ def validate_clean_account():
 
 
 def run(args):
+    require_macos = getattr(args, "require_macos_arm64", False)
+    if require_macos and args.preflight_only:
+        print("Apple Silicon 宿主验收必须执行完整三阶段，请移除 --preflight-only", file=sys.stderr)
+        return 1
     environment = json.loads(args.environment.resolve(strict=True).read_bytes())
     root = args.output_dir.resolve()
     root.mkdir(parents=True, exist_ok=False)
@@ -121,6 +148,9 @@ def run(args):
             if not executable:
                 raise ValueError("找不到指定的 Codex CLI")
             executable = Path(executable).absolute()
+            if require_macos:
+                report["attempted_phase"] = "macos_host_check"
+                report["host_environment"] = macos_host_environment(executable, environment, root)
             host_version = run_command([executable, "--version"], root).strip()
             if host_version != f"codex-cli {HOST_VERSION}":
                 raise ValueError("Codex 版本与该试点的固定版本不符")
@@ -178,6 +208,7 @@ def run(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--require-macos-arm64", action="store_true", help="核验原生 Apple Silicon 宿主和 Python 环境并运行完整三阶段")
     parser.add_argument("--environment", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True, help="本次新建的演练目录")
     parser.add_argument("--codex", default="codex")
