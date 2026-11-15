@@ -12,6 +12,8 @@ SYSTEMS = ("ubuntu-latest", "windows-latest")
 CORE_STEPS = ("测试与模拟规则基准", "检查归档内容、独立安装和 SHA-256")
 INSPECTOR_STEP = "真实客户端与 SDK 上游端到端验证"
 PILOT_STEP = "Codex 宿主安装、升级和回退"
+NATIVE_STEP = "核对原生宿主的三阶段证据"
+MAC_STEP = "核对 macOS 15 原生宿主的三阶段证据"
 
 
 def job(job_id, name, system, run_id, steps):
@@ -55,6 +57,26 @@ def pilot_report():
     }
 
 
+def native_pilot(target, check_step=NATIVE_STEP):
+    if target == "macos-arm64":
+        job_id, label = 121, "macos-15"
+        system, os_version, arch, machine = "Darwin", "15.8.2", "arm64", "arm64"
+    else:
+        job_id, label = 122, "windows-2025"
+        system, os_version, arch, machine = "Windows", "10.0.26100", "x64", "AMD64"
+    pythons = {}
+    for role, patch in (("gateway", 9), ("previous", 10), ("candidate", 11)):
+        python = {"implementation": "CPython", "version": f"3.12.{patch}", "machine": machine}
+        if system == "Windows":
+            python["python_platform"] = "win-amd64"
+        pythons[role] = python
+    report = pilot_report()
+    # 同一网关版本由不同平台各自打包，归档摘要可与 Linux 基线不同。
+    report["gateway_wheel_sha256"] = ("f" if system == "Windows" else "b") * 64
+    report["host_environment"] = {"system": system, "os_version": os_version, "codex_arch": arch, "pythons": pythons}
+    return job(job_id, f"lifecycle-{target}", label, PILOT_RUN, [PILOT_STEP, check_step]), report
+
+
 class SupportMatrixTests(unittest.TestCase):
     def setUp(self):
         self.jobs = []
@@ -89,6 +111,78 @@ class SupportMatrixTests(unittest.TestCase):
             else:
                 self.assertNotIn("2.14.0", matching)
                 self.assertNotIn("0.167.0-alpha.3.2", matching)
+
+    def test_native_jobs_add_only_their_measured_platforms(self):
+        original = self.render()
+        self.assertEqual(self.render(native_pilots=[]), original)
+        old_rows = [line for line in original.splitlines() if "/job/" in line]
+        # 旧 Mac 作业与后来的双平台作业使用不同的原生架构验收步骤名。
+        for pilots in ([native_pilot("macos-arm64", MAC_STEP)], [native_pilot("windows-x64")],
+                       [native_pilot("macos-arm64"), native_pilot("windows-x64")]):
+            with self.subTest(jobs=[entry["name"] for entry, _ in pilots]):
+                rows = [line for line in self.render(native_pilots=pilots).splitlines() if "/job/" in line]
+                self.assertEqual(len(rows), len(old_rows) + len(pilots))
+                for old in old_rows:
+                    self.assertIn(old, rows)
+                for native_job, native_report in pilots:
+                    link = f"/actions/runs/{PILOT_RUN}/job/{native_job['id']})"
+                    row, = [line for line in rows if link in line]
+                    env = native_report["host_environment"]
+                    for expected in (native_job["labels"][0], env["os_version"], env["codex_arch"],
+                                     "0.167.0-alpha.3.2", "2025.8.4", "2025.9.25"):
+                        self.assertIn(expected, row)
+                    for python in env["pythons"].values():
+                        self.assertIn(python["version"], row)
+
+    def test_job_label_report_and_native_gate_must_agree(self):
+        mac, mac_report = native_pilot("macos-arm64")
+        windows, win_report = native_pilot("windows-x64")
+        skipped = {**windows["steps"][1], "conclusion": "skipped"}
+        for label, entry, report in (
+            ("Mac 报告作为 Windows 证据", windows, mac_report),
+            ("Windows 报告作为 Mac 证据", mac, win_report),
+            ("错误 runner", {**windows, "labels": ["macos-15"]}, win_report),
+            ("其他运行的宿主作业", {**mac, "run_id": VERIFY_RUN}, mac_report),
+            ("缺少架构验收步骤", {**mac, "steps": mac["steps"][:1]}, mac_report),
+            ("跳过架构验收", {**windows, "steps": [windows["steps"][0], skipped]}, win_report),
+            ("Windows 作业使用旧 Mac 步骤", *native_pilot("windows-x64", MAC_STEP)),
+        ):
+            with self.subTest(case=label), self.assertRaises(ValueError):
+                self.render(native_pilots=[(entry, report)])
+        with self.assertRaises(ValueError):
+            self.render(pilot_job={**self.pilot_job, "labels": ["windows-2025"]})
+
+    def test_native_host_and_every_interpreter_need_observed_architecture(self):
+        for target, field, value in (("windows-x64", "codex_arch", "arm64"),
+                                     ("macos-arm64", "os_version", "15.8.2|extra")):
+            entry, report = native_pilot(target)
+            report["host_environment"][field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                self.render(native_pilots=[(entry, report)])
+        for target, role, field, value in (
+            ("windows-x64", "gateway", "python_platform", "win32"),
+            ("windows-x64", "previous", "machine", "ARM64"),
+            ("macos-arm64", "candidate", "version", "3.11.9"),
+            ("macos-arm64", "gateway", "implementation", "PyPy"),
+        ):
+            entry, report = native_pilot(target)
+            report["host_environment"]["pythons"][role][field] = value
+            with self.subTest(role=role, field=field), self.assertRaises(ValueError):
+                self.render(native_pilots=[(entry, report)])
+        entry, report = native_pilot("windows-x64")
+        del report["host_environment"]["pythons"]["candidate"]
+        with self.assertRaises(ValueError):
+            self.render(native_pilots=[(entry, report)])
+
+    def test_native_row_needs_full_lifecycle_for_matrix_gateway_version(self):
+        entry, report = native_pilot("macos-arm64")
+        for field, value in (("gateway_version", "0.3.0a2"), ("scope", "preflight"),
+                             ("stages", report["stages"][:2])):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                self.render(native_pilots=[(entry, {**report, field: value})])
+        report["stages"][2]["denial"] = ""
+        with self.assertRaises(ValueError):
+            self.render(native_pilots=[(entry, report)])
 
     def test_missing_platform_job_or_skipped_required_step_is_rejected(self):
         with self.assertRaises(ValueError):

@@ -55,12 +55,53 @@ class SupportEvidenceTests(unittest.TestCase):
             return b""
 
         with patch.object(evidence, "_gh", side_effect=gh):
-            actual, interop, selected, report = evidence.fetch_evidence(COMMIT, 11, 22)
+            actual, interop, selected, report, native = evidence.fetch_evidence(COMMIT, 11, 22)
+        self.assertEqual(native, [])
         self.assertEqual((actual, selected, report), (verify_jobs, pilot_job, {"name": "codex-time-lifecycle"}))
         self.assertEqual(interop, {key: {"name": "interop-" + key} for key in ("ubuntu-latest", "windows-latest")})
         self.assertEqual([(r, n) for r, n, _ in downloads],
                          [(11, "interop-ubuntu-latest"), (11, "interop-windows-latest"), (22, "codex-time-lifecycle")])
         self.assertTrue(all(not directory.exists() for _, _, directory in downloads))
+
+    def test_only_observed_native_jobs_read_their_own_named_reports_in_stable_order(self):
+        linux = job(22, 1, "lifecycle")
+        mac = job(22, 2, "lifecycle-macos-arm64")
+        windows = job(22, 3, "lifecycle-windows-x64")
+        unrelated = job(22, 4, "lifecycle-windows-x64-preview")
+        mac_artifact = "codex-time-lifecycle-macos-arm64"
+        windows_artifact = "codex-time-lifecycle-windows-x64"
+        for optional, expected in (([windows, mac], [(mac, mac_artifact), (windows, windows_artifact)]),
+                                   ([mac], [(mac, mac_artifact)]), ([windows], [(windows, windows_artifact)])):
+            with self.subTest(optional=optional), patch.object(evidence, "_verify_run"), \
+                    patch.object(evidence, "_jobs", side_effect=[[], [unrelated, *optional, linux]]), \
+                    patch.object(evidence, "_report", side_effect=lambda run, name: {"name": name}) as download:
+                *_, native = evidence.fetch_evidence(COMMIT, 11, 22)
+                self.assertEqual(native, [(selected, {"name": name}) for selected, name in expected])
+                self.assertEqual([c.args for c in download.call_args_list], [
+                    (11, "interop-ubuntu-latest"), (11, "interop-windows-latest"), (22, "codex-time-lifecycle"),
+                    *((22, name) for _, name in expected),
+                ])
+
+    def test_ambiguous_or_incomplete_native_job_cannot_be_silently_dropped(self):
+        linux = job(22, 1, "lifecycle")
+        for name in ("lifecycle-macos-arm64", "lifecycle-windows-x64"):
+            native = job(22, 2, name)
+            for rows in ([native, job(22, 3, name)], [{**native, "conclusion": "skipped"}],
+                         [{**native, "status": "in_progress"}]):
+                with self.subTest(name=name, rows=rows), patch.object(evidence, "_verify_run"), \
+                        patch.object(evidence, "_jobs", side_effect=[[], [linux, *rows]]), \
+                        patch.object(evidence, "_report") as download:
+                    with self.assertRaises(ValueError):
+                        evidence.fetch_evidence(COMMIT, 11, 22)
+                    download.assert_not_called()
+
+    def test_missing_native_artifact_fails_the_snapshot(self):
+        jobs = [job(22, 1, "lifecycle"), job(22, 2, "lifecycle-macos-arm64")]
+        with patch.object(evidence, "_verify_run"), patch.object(evidence, "_jobs", side_effect=[[], jobs]), \
+                patch.object(evidence, "_report", side_effect=[{}, {}, {}, ValueError("报告缺失")]) as download:
+            with self.assertRaisesRegex(ValueError, "报告缺失"):
+                evidence.fetch_evidence(COMMIT, 11, 22)
+        self.assertEqual(download.call_args.args, (22, "codex-time-lifecycle-macos-arm64"))
 
     def test_unusable_run_or_input_cannot_authorize_artifact_download(self):
         with patch.object(evidence, "_gh") as gh:
@@ -98,10 +139,12 @@ class SupportEvidenceTests(unittest.TestCase):
 
     def test_rerun_during_download_invalidates_reports(self):
         first, pilot = run_record(11, "ci"), run_record(22, "codex-time-pilot")
+        pilot_jobs = [job(22, 2, "lifecycle"), job(22, 3, "lifecycle-windows-x64")]
         with patch.object(evidence, "_api", side_effect=[first, pilot, first, {**pilot, "run_attempt": 2}]), \
-                patch.object(evidence, "_jobs", side_effect=[[job(11, 1, "test")], [job(22, 2, "lifecycle")]]), \
-                patch.object(evidence, "_report", return_value={}), self.assertRaises(ValueError):
+                patch.object(evidence, "_jobs", side_effect=[[job(11, 1, "test")], pilot_jobs]), \
+                patch.object(evidence, "_report", return_value={}) as download, self.assertRaises(ValueError):
             evidence.fetch_evidence(COMMIT, 11, 22)
+        self.assertEqual(download.call_args.args, (22, "codex-time-lifecycle-windows-x64"))
 
     def test_failed_download_never_reuses_stale_file_or_echoes_signed_url(self):
         directories = []
