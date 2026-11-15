@@ -5,7 +5,7 @@ import subprocess
 import sys
 
 ROOT = Path.cwd().resolve()
-TOOLS = ("read_file", "write_file", "python_version")
+TOOL_FIELDS = {"read_file": ("path",), "write_file": ("path", "content"), "python_version": ()}
 
 def local_path(value):
     target = (ROOT / value).resolve()
@@ -41,7 +41,12 @@ def main():
         if method == "initialize":
             response["result"] = {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}, "serverInfo": {"name": "local-tools-example", "version": "0.2.0"}}
         elif method == "tools/list":
-            response["result"] = {"tools": [{"name": name, "description": "本地示例工具；参数由代理的本地策略定义。", "inputSchema": {"type": "object"}} for name in TOOLS]}
+            response["result"] = {"tools": [
+                {"name": name, "inputSchema": {
+                    "type": "object", "properties": {key: {"type": "string"} for key in fields},
+                    "required": list(fields),
+                }} for name, fields in TOOL_FIELDS.items()
+            ]}
         elif method == "tools/call":
             try:
                 text = invoke(request["params"]["name"], request["params"].get("arguments", {}))

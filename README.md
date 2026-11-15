@@ -1,6 +1,6 @@
 # Agent Immunity
 
-Agent Immunity 0.2 是实验性的工具调用策略检查器，提供一个真实的 MCP stdio 代理。它在调用转发前检查本地登记的工具、参数、路径、网络目标及有限的凭证表示，适合研究和小范围集成验证。
+Agent Immunity 为本地 MCP stdio 工具提供显式策略检查。维护者可以限制工具、参数、文件目录和网络目标，并在 CI 中核对上游升级后的接口。当前 0.3.0a1 是面向开发者试点的预览版。[产品路线图](docs/product-roadmap.md)
 
 核心运行时使用 Python 3.10+ 标准库，采用 [Apache-2.0 许可证](LICENSE)。独立客户端互操作验证另有锁定的 Node、Python SDK 测试依赖。0.2 改变了 0.1 的 API 和功能边界，已有调用方请先阅读[迁移说明](docs/migration_0_2.md)。
 
@@ -22,6 +22,12 @@ Agent Immunity 0.2 是实验性的工具调用策略检查器，提供一个真�
 
 ## 快速验证
 
+先在仓库根目录运行策略体检。安装发行包后可使用 `agent-immunity-check` 命令。提供原始上游工具目录后，还可以检查工具名、必填参数和类型漂移。复杂约束会提示人工复核。[体检、安装与退出码](docs/doctor.md)
+
+```text
+python -m agent_immunity.doctor --policy examples/policy.json --json
+```
+
 在克隆后的仓库根目录执行：
 
 ```powershell
@@ -37,7 +43,7 @@ python -X utf8 -m agent_immunity.benchmark.run_evaluation --output artifacts/ben
 
 测试包含独立客户端、代理和上游进程，使用临时目录中的实际文件与 `127.0.0.1` HTTP 接收器观察副作用。受限宿主若禁止回环连接，网络测试会失败；这不能当成代理成功拦截的证据。符号链接用例会在宿主不允许创建链接时明确跳过。
 
-核心代理和标准库测试从源码运行无需安装额外依赖。需要安装到当前 Python 环境时可执行 `python -m pip install .`；这不表示 0.2 已在包索引发布。
+核心代理和标准库测试可直接从源码运行。要安装到当前 Python 环境，可执行 `python -m pip install .`。对应提交的 CI 提供开发预览的 wheel、sdist 和 SHA256SUMS。[获取预览包](docs/doctor.md#获取开发者预览包)
 
 ## 启动 MCP 示例
 
