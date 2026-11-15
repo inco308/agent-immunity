@@ -12,6 +12,14 @@ INPUT = {"source_timezone": "UTC", "time": "09:00", "target_timezone": "Asia/Tok
 HOST_VERSION = "0.167.0-alpha.3.2"
 
 
+class GatewayStartupError(RuntimeError):
+    """宿主发现网关启动失败，或在轮询期限内仍未发现可用连接。"""
+
+    def __init__(self, state):
+        self.state = state
+        super().__init__(f"Codex 未能连接试点网关（{state}）")
+
+
 def configured_command(binary, project, *args):
     """从本阶段活动文件读取一条 TOML 赋值，作为进程独立的 -c 参数。"""
     setting = (project / ".codex/config.toml").read_text(encoding="utf-8").rstrip("\n")
@@ -53,10 +61,12 @@ def host_stage(binary, project, expect_weekday):
             if statuses and (runtime == "connected" or (runtime is None and statuses[0].get("tools"))):
                 names = sorted(statuses[0]["tools"])
                 break
-            if statuses and statuses[0].get("runtimeStatus") in {"failed", "authenticationRequired"}:
-                raise RuntimeError("Codex 无法连接试点网关")
+            if runtime == "failed":
+                raise GatewayStartupError("failed")
+            if runtime == "authenticationRequired":
+                raise RuntimeError("Codex 连接试点网关时需要认证")
             if seq > 50:
-                raise RuntimeError(f"Codex 工具发现超时，注册可见={bool(statuses)}，宿主状态={runtime!r}")
+                raise GatewayStartupError("discovery_timeout")
             time.sleep(.25)
         if names != ["convert_time"]:
             raise ValueError("Codex 中可见的工具与本地登记不一致")

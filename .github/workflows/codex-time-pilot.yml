@@ -68,10 +68,35 @@ jobs:
             --codex pilot/codex_time/node_modules/.bin/codex \
             --environment artifacts/pilot-env/environment.json \
             --output-dir artifacts/codex-time-lifecycle
+      - name: 在新的试点项目中验证候选启动失败后的宿主恢复
+        env:
+          PREVIOUS_RUN: ${{ inputs.previous_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          output=artifacts/codex-time-recovery
+          test ! -e "$output"
+          options=()
+          if [[ -n "$PREVIOUS_RUN" ]]; then options+=(--require-verified-gateways); fi
+          status=0
+          python -X utf8 -m pilot.codex_time.run "${options[@]}" --simulate-candidate-startup-failure \
+            --codex pilot/codex_time/node_modules/.bin/codex \
+            --environment artifacts/pilot-env/environment.json --output-dir "$output" || status=$?
+          python -X utf8 -m pilot.codex_time.check_recovery --runner-exit-code "$status" \
+            --environment artifacts/pilot-env/environment.json --output-dir "$output"
       - name: 保存阶段证据
         if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
           name: codex-time-lifecycle
           path: artifacts/codex-time-lifecycle/report.json
+          if-no-files-found: warn
+      - name: 保存故障演练的独立报告
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: codex-time-recovery
+          path: |
+            artifacts/codex-time-recovery/report.json
+            artifacts/codex-time-recovery/candidate-exit.txt
           if-no-files-found: warn

@@ -139,7 +139,8 @@ class CodexPilotLifecycleTests(unittest.TestCase):
                 raise TypeError("候选宿主响应形状异常")
             if self.failure == "not_mapping":
                 return []
-        return {"weekday_field": expect_weekday, "denial": "TRANSITION_DENIED"}
+        return {"visible_tools": ["convert_time"], "source": "UTC 09:00", "target": "Asia/Tokyo 18:00",
+                "difference": "+9.0h", "weekday_field": expect_weekday, "denial": "TRANSITION_DENIED"}
 
     def run_trial(self):
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
@@ -262,6 +263,106 @@ class CodexPilotLifecycleTests(unittest.TestCase):
 
     def test_returning_a_malformed_stage_result_cannot_promote_candidate_to_verified(self):
         self.check_candidate_failure("not_mapping")
+
+    def fail_candidate_startup(self, state="failed", on_candidate=None, on_recovery=None):
+        """让宿主在实际读取候选配置后报错，保留后续连接独立的观察记录。"""
+        def observe(binary, project, *, expect_weekday):
+            result = self.inspect_active_config(binary, project, expect_weekday=expect_weekday)
+            if expect_weekday:
+                if on_candidate:
+                    on_candidate()
+                raise pilot.GatewayStartupError(state)
+            if len(self.observations) == 3 and on_recovery:
+                on_recovery()
+            return result
+
+        self.host.side_effect = observe
+
+    def test_candidate_startup_failure_reconnects_and_checks_verified_original(self):
+        self.enable_verified_previews()
+        self.fail_candidate_startup()
+        self.assertEqual(self.run_trial(), 1)
+        report = self.read_report()
+        self.assertEqual((report["status"], report["attempted_phase"], report["failure_type"]),
+                         ("failed", "upgrade", "GatewayStartupError"))
+        self.assertEqual([s["phase"] for s in report["stages"]], ["install"])
+        self.assertEqual([s for s, _, _ in self.observations], ["previous", "candidate", "previous"])
+        self.assertEqual(self.observations[0], self.observations[2])
+        self.assertEqual(self.active.read_bytes(), self.observations[0][1])
+        self.assertEqual(self.identity_checks[-2:], [("previous", 2), ("previous", 3)])
+        first = report["stages"][0]
+        recovery = report["recovery"]
+        self.assertEqual((recovery["phase"], recovery["status"]), ("recovery", "passed"))
+        for key in ("config_sha256", "gateway", "version", "visible_tools", "source", "target",
+                    "difference", "weekday_field", "denial"):
+            self.assertEqual(recovery[key], first[key], key)
+        self.assertEqual(report["restored_verified_config_sha256"], checksum(self.active.read_bytes()))
+        self.assertEqual(self.account_writes, [])
+        self.assertNotIn("fault", report)
+
+    def test_recovery_host_failure_preserves_original_failure_and_does_not_retry(self):
+        def no_reconnection():
+            raise ConnectionError("恢复宿主连接失败")
+
+        self.fail_candidate_startup("discovery_timeout", on_recovery=no_reconnection)
+        self.assertEqual(self.run_trial(), 1)
+        report = self.read_report()
+        self.assertEqual((report["status"], report["failure_type"], report["host_startup_state"]),
+                         ("failed", "GatewayStartupError", "discovery_timeout"))
+        self.assertEqual((report["recovery"]["status"], report["recovery"]["error_type"]),
+                         ("failed", "ConnectionError"))
+        self.assertEqual(self.host.call_count, 3)
+        self.assertEqual(self.active.read_bytes(), self.observations[0][1])
+
+    def test_changed_original_install_is_rejected_before_recovery_connection(self):
+        slots = self.enable_verified_previews()
+        self.fail_candidate_startup()
+        inspect = pilot.gateway_identity
+
+        def changed_install(entry, root):
+            identity = inspect(entry, root)
+            if entry == slots["previous"] and len(self.observations) >= 2:
+                identity["metadata_sha256"] = checksum(b"replacement metadata")
+            return identity
+
+        with patch.object(pilot, "gateway_identity", side_effect=changed_install):
+            self.assertEqual(self.run_trial(), 1)
+        report = self.read_report()
+        self.assertEqual(report["recovery"]["status"], "failed")
+        self.assertEqual(self.host.call_count, 2)
+
+    def test_policy_drift_before_recovery_prevents_new_host_connection(self):
+        self.fail_candidate_startup(on_candidate=lambda: self.policy_path.write_bytes(b"{}"))
+        self.assertEqual(self.run_trial(), 1)
+        report = self.read_report()
+        self.assertEqual(report["recovery"]["status"], "failed")
+        self.assertEqual(self.host.call_count, 2)
+
+    def test_policy_drift_during_reconnection_cannot_report_service_recovered(self):
+        self.fail_candidate_startup(on_recovery=lambda: self.policy_path.write_bytes(b"{}"))
+        self.assertEqual(self.run_trial(), 1)
+        report = self.read_report()
+        self.assertEqual(report["recovery"]["status"], "failed")
+        self.assertEqual(self.host.call_count, 3)
+
+    def test_interrupted_upgrade_restores_configuration_without_reconnecting(self):
+        def stop():
+            raise KeyboardInterrupt()
+
+        self.fail_candidate_startup(on_candidate=stop)
+        with self.assertRaises(KeyboardInterrupt):
+            self.run_trial()
+        report = self.read_report()
+        self.assertEqual(report["failure_type"], "KeyboardInterrupt")
+        self.assertEqual(self.host.call_count, 2)
+        self.assertEqual(self.active.read_bytes(), self.observations[0][1])
+
+    def test_first_startup_failure_has_no_verified_service_to_reconnect(self):
+        self.host.side_effect = pilot.GatewayStartupError("failed")
+        self.assertEqual(self.run_trial(), 1)
+        self.assertEqual(self.host.call_count, 1)
+        self.assertEqual(self.read_report()["stages"], [])
+        self.assertFalse(self.active.exists())
 
     def test_three_stages_switch_upstream_and_keep_one_policy(self):
         self.assertEqual(self.run_trial(), 0)
