@@ -18,6 +18,30 @@ python -m agent_immunity.mcp_stdio --policy examples/policy.json -- python ../lo
 
 若已通过 `python -m pip install .` 安装，可使用等价入口 `agent-immunity --policy ... -- ...`。旧模块名 `python -m agent_immunity.cross_validate.mcp_proxy_demo` 转发到新入口，同样需要策略和上游参数；不再运行预制演示。
 
+## 本地调用判定日志
+
+`--audit-dir` 适用于需要还原某次拒绝原因的本地部署。默认关闭，不创建审计文件。从仓库根目录执行以下命令，再按下文的握手示例发起一次工具调用。示例目录与工具可写的 `examples/workspace` 分开，部署时请限制审计目录的访问权限。
+
+```powershell
+New-Item -ItemType Directory -Force -Path artifacts/decision-audit | Out-Null
+python -m agent_immunity.mcp_stdio --policy examples/policy.json --audit-dir artifacts/decision-audit -- python ../local_tools.py
+```
+
+每个会话使用一个 `<session_id>.jsonl` 文件。对于进入引擎判定的 `tools/call`，代理在转发前写入一行。握手、列工具以及在协议校验阶段被拒绝的请求不产生调用判定记录。完成一次工具调用后，在另一个 PowerShell 窗口查看最近写入的文件。
+
+```powershell
+$sessionFile = Get-ChildItem artifacts/decision-audit -File -Filter '*.jsonl' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+Get-Content -LiteralPath $sessionFile.FullName | ForEach-Object { $_ | ConvertFrom-Json } | Select-Object schema_version,utc,session_id,sequence,tool_index,decision_code
+```
+
+用 `session_id` 定位会话，按 `sequence` 查看先后。`tool_index` 按**本次加载的本地策略**中的工具名排序，从 1 开始。示例中 `1` 对应 `python_version`，`2` 对应 `read_file`，`3` 对应 `write_file`。`0` 表示未登记工具。比如 `2 / ARGUMENTS_DENIED` 表示读取工具的参数校验未通过，可回查策略里的字段、类型与根目录。排查其他会话时应使用该会话对应的策略版本。
+
+`decision_code=ALLOW` 仅表明该调用通过转发前检查。核实工具是否实际执行或成功，需要查看受信上游、目标文件或接收器的记录。日志只含上面六个字段，不保存原始工具名、请求 ID、参数、结果或异常内容。
+
+审计目录必须预先存在。启动时会检查给定路径、解析后的实际路径以及途中经过的链接，确保审计路径位于所有声明的可写根之外。若 stderr 提示“无法在受信目录创建审计文件，上游未启动”，请检查目录位置及代理账户的创建权限。
+
+调用时写入失败，或下一行将超过单会话 **4 MiB** 文件预算时，客户端会收到 `-32603` 及“审计写入失败”的消息。代理关闭会话，该次调用不会派发。检查目录权限、可用空间和会话文件大小，再启动新会话。同步文件 I/O 可能阻塞代理，宿主负责日志轮转、保留期限及访问权限。审计文件不提供防篡改或掉电持久化保证。
+
 ## 官方客户端互操作入口
 
 [互操作指南](interop.md)提供 MCP Inspector 2.14.0 的 `mcpdo` 持久连接客户端及官方 Python SDK 1.30.0 上游，包含可复制的配置、安装命令、完整文件/HTTP 业务链和端到端断言。它使用独立的 Python 3.12 测试环境与 Node 24.22.1；核心代理的标准库依赖范围不变。

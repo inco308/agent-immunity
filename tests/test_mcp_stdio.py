@@ -14,13 +14,14 @@ from tests.support import DATA, FIXTURES, policy_data, temporary_directory
 REPO = Path(__file__).resolve().parents[1]
 
 class Client:
-    def __init__(self, root, policy, mode="normal", timeout=3, handshake=True, server=None):
+    def __init__(self, root, policy, mode="normal", timeout=3, handshake=True, server=None, *, audit_dir=None):
         self.root = root
         policy_path = root / "policy.json"
         policy_path.write_text(json.dumps(policy), encoding="utf-8")
         env = dict(os.environ, PYTHONIOENCODING="utf-8")
         upstream = [sys.executable, "-u", str(server)] if server else [sys.executable, "-u", str(FIXTURES / "mcp_server.py"), "--root", str(root), "--mode", mode]
-        self.process = subprocess.Popen([sys.executable, "-X", "utf8", "-m", "agent_immunity.mcp_stdio", "--policy", str(policy_path), "--timeout", str(timeout), "--", *upstream], cwd=REPO, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+        audit_args = ["--audit-dir", str(audit_dir)] if audit_dir is not None else []
+        self.process = subprocess.Popen([sys.executable, "-X", "utf8", "-m", "agent_immunity.mcp_stdio", "--policy", str(policy_path), "--timeout", str(timeout), *audit_args, "--", *upstream], cwd=REPO, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
         self.responses = queue.Queue()
         self.next_id = 0
         def read():

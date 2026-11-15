@@ -1,5 +1,6 @@
 """固定 MCP 2025-06-18 工具子集的 stdio 策略代理。"""
 import argparse
+from contextlib import closing
 import queue
 import subprocess
 import sys
@@ -17,7 +18,7 @@ def error(call_id, code, message):
     return {"jsonrpc": "2.0", "id": call_id, "error": {"code": code, "message": message}}
 
 class StdioProxy:
-    def __init__(self, policy, command, timeout=30, input_stream=None, output_stream=None):
+    def __init__(self, policy, command, timeout=30, input_stream=None, output_stream=None, *, audit=None):
         self.policy = policy
         self.command = command
         self.timeout = timeout
@@ -25,6 +26,7 @@ class StdioProxy:
         self.input = input_stream or sys.stdin.buffer.raw
         self.output = output_stream or sys.stdout.buffer
         self.engine = DynamicImmunityEngine(policy)
+        self.audit = audit
         self.messages = queue.Queue(maxsize=64)
         self.outgoing = queue.Queue(maxsize=64)
         self.process = None
@@ -89,13 +91,15 @@ class StdioProxy:
         except (OSError, ValueError):
             pass
 
-    def fail(self, code, message):
-        if self.pending:
-            self.emit(error(self.pending["id"], code, message))
+    def fail(self, code, message, *, request_id=None):
+        if request_id is None and self.pending:
+            request_id = self.pending["id"]
         self.engine.abort()
         self.pending = None
         self.running = False
         self.exit_code = 1
+        if request_id is not None:
+            self.emit(error(request_id, code, message))
 
     def dispatch(self, message, call=None):
         self.pending = {"id": message["id"], "method": message["method"], "call": call, "deadline": time.monotonic() + self.timeout}
@@ -165,6 +169,13 @@ class StdioProxy:
                 return
             call = ToolCall(str(call_id), name, arguments)
             decision = self.engine.begin(call)
+            if self.audit is not None:
+                try:
+                    self.audit.record(name, decision.code)
+                except OSError:
+                    # 判定尚未进入发送队列。审计失败即终止这次调用和会话。
+                    self.fail(-32603, "审计写入失败，本次工具调用未转发，会话已关闭", request_id=call_id)
+                    return
             if not decision.allowed:
                 result = self.engine.rejected(decision.code, decision.reason)
                 self.emit({"jsonrpc": "2.0", "id": call_id, "result": result.output})
@@ -296,6 +307,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--policy", required=True, help="受信本地 JSON 策略")
     parser.add_argument("--timeout", type=float, default=30, help="每次上游请求超时秒数")
+    parser.add_argument("--audit-dir", help="在既有受信目录按会话保存脱敏的工具调用判定")
     parser.add_argument("upstream", nargs=argparse.REMAINDER, help="-- 之后指定受信上游命令")
     args = parser.parse_args()
     command = args.upstream[1:] if args.upstream[:1] == ["--"] else args.upstream
@@ -305,7 +317,21 @@ def main():
         policy = Policy.load(args.policy)
     except (OSError, ValueError, TypeError, RecursionError):
         parser.error("无法加载有效的本地策略")
-    return StdioProxy(policy, command, args.timeout).run()
+    if args.audit_dir is None:
+        return StdioProxy(policy, command, args.timeout).run()
+    from .decision_audit import AuditError, DecisionAudit
+
+    try:
+        audit = DecisionAudit.open(args.audit_dir, policy)
+    except AuditError:
+        print("无法在受信目录创建审计文件，上游未启动", file=sys.stderr)
+        return 1
+    try:
+        with closing(audit):
+            return StdioProxy(policy, command, args.timeout, audit=audit).run()
+    except AuditError:
+        print("审计文件关闭失败，请核查记录", file=sys.stderr)
+        return 1
 
 if __name__ == "__main__":
     raise SystemExit(main())

@@ -32,7 +32,7 @@ python -m agent_immunity.doctor --policy examples/policy.json --catalog artifact
 在对应提交的 GitHub Actions `verify` 页面下载 `agent-immunity-dist` 并解压。在该目录用 `sha256sum -c SHA256SUMS`，或在 PowerShell 中用 `Get-FileHash -Algorithm SHA256` 核对 wheel 与源码包摘要。在新的虚拟环境执行以下命令即可试用本轮版本。
 
 ```text
-python -m pip install --no-index --no-deps ./agent_immunity-0.3.0a1-py3-none-any.whl
+python -m pip install --no-index --no-deps ./agent_immunity-0.3.0a2-py3-none-any.whl
 agent-immunity-check --help
 agent-immunity --help
 ```

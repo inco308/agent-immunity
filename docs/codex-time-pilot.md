@@ -7,7 +7,7 @@
 | 组件 | 选择 |
 | --- | --- |
 | 编码宿主 | Codex CLI 0.167.0-alpha.3.2，App Server stdio 接口 |
-| 网关 | 从当前提交构建并安装 0.3.0a1 wheel |
+| 网关 | 从当前提交构建并安装 0.3.0a2 wheel |
 | 上游初始与回退版本 | mcp-server-time 2025.8.4，[发行文件](https://pypi.org/project/mcp-server-time/2025.8.4/) |
 | 上游升级版本 | mcp-server-time 2025.9.25，[发行文件](https://pypi.org/project/mcp-server-time/2025.9.25/) |
 | 协议与环境 | MCP 2025-06-18，Python 3.12，上游 Python SDK 1.30.0 |
@@ -22,7 +22,7 @@
 
 ```bash
 python -m pip wheel --no-deps --wheel-dir artifacts/pilot-wheels .
-python -X utf8 pilot/codex_time/prepare.py --root artifacts/pilot-env --wheel artifacts/pilot-wheels/agent_immunity-0.3.0a1-py3-none-any.whl
+python -X utf8 pilot/codex_time/prepare.py --root artifacts/pilot-env --wheel artifacts/pilot-wheels/agent_immunity-0.3.0a2-py3-none-any.whl
 npm ci --prefix pilot/codex_time --ignore-scripts --no-audit --no-fund
 python -X utf8 -m pilot.codex_time.run --codex pilot/codex_time/node_modules/.bin/codex --environment artifacts/pilot-env/environment.json --output-dir artifacts/time-pilot-run
 ```

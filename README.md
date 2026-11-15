@@ -1,6 +1,6 @@
 # Agent Immunity
 
-Agent Immunity 为本地 MCP stdio 工具提供显式策略检查。维护者可以限制工具、参数、文件目录和网络目标，并在 CI 中核对上游升级后的接口。当前 0.3.0a1 是面向开发者试点的预览版。[产品路线图](docs/product-roadmap.md)
+Agent Immunity 为本地 MCP stdio 工具提供显式策略检查。维护者可以限制工具、参数、文件目录和网络目标，并在 CI 中核对上游升级后的接口。当前 0.3.0a2 是面向开发者试点的预览版。[产品路线图](docs/product-roadmap.md)
 
 核心运行时使用 Python 3.10+ 标准库，采用 [Apache-2.0 许可证](LICENSE)。独立客户端互操作验证另有锁定的 Node、Python SDK 测试依赖。0.2 改变了 0.1 的 API 和功能边界，已有调用方请先阅读[迁移说明](docs/migration_0_2.md)。
 
@@ -56,6 +56,8 @@ python -m agent_immunity.mcp_stdio --policy examples/policy.json -- python ../lo
 代理将上游工作目录设为策略指定的 `examples/workspace`，因此示例的 `../local_tools.py` 相对该目录解析。策略和上游脚本位于工具可写工作区之外。真实集成宜使用 Python、策略和上游脚本的绝对路径。
 
 该命令会等待 MCP 客户端从 stdin 输入协议消息；没有输出并不表示挂起。stdout 只用于逐行 JSON-RPC。初始化流程、手工请求示例与支持范围见 [MCP 接入说明](docs/mcp_integration.md)。
+
+排查工具为什么被拒绝时，可以在 `--` 之前增加 `--audit-dir` 并指定受信本地目录。代理会在每个会话的 JSONL 文件中写入工具编号和转发前的判定码。默认运行不创建审计文件。[启用命令、编号对照与读日志示例](docs/mcp_integration.md#本地调用判定日志)
 
 ## 官方客户端端到端场景
 
