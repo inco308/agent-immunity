@@ -25,6 +25,12 @@ def job(run_id, number, name):
             "status": "completed", "conclusion": "success", "name": name}
 
 
+def packaging_job(number, system="macos-15", python="3.12", conclusion="success"):
+    steps = [{"name": name, "status": "completed", "conclusion": conclusion}
+             for name in ("核对两个安装环境的 macOS、架构和 Python 系列", "保存 macOS 安装验收报告")]
+    return {**job(11, number, f"test ({system}, {python})"), "labels": [system], "steps": steps}
+
+
 class SupportEvidenceTests(unittest.TestCase):
     def test_only_expected_attempts_and_three_scoped_artifacts_are_read(self):
         verify_jobs = [job(11, 1, "first"), job(11, 2, "second")]
@@ -62,6 +68,57 @@ class SupportEvidenceTests(unittest.TestCase):
         self.assertEqual([(r, n) for r, n, _ in downloads],
                          [(11, "interop-ubuntu-latest"), (11, "interop-windows-latest"), (22, "codex-time-lifecycle")])
         self.assertTrue(all(not directory.exists() for _, _, directory in downloads))
+
+    def test_install_reports_are_bound_to_the_verify_run_axis_and_filename(self):
+        mac310 = packaging_job(1, python="3.10")
+        mac312 = packaging_job(2)
+        historical = {**packaging_job(3, python="3.13"), "steps": []}
+        linux = packaging_job(4, system="ubuntu-latest", conclusion="skipped")
+        windows = packaging_job(5, system="windows-latest", conclusion="skipped")
+        unrelated = {**packaging_job(6), "name": "preview test (macos-15, 3.12)"}
+        verify_jobs = [mac310, mac312, historical, linux, windows, unrelated]
+        pilot = [job(22, 7, "lifecycle")]
+        with patch.object(evidence, "_verify_run"), patch.object(evidence, "_jobs", side_effect=[verify_jobs, pilot]), \
+                patch.object(evidence, "_report", side_effect=lambda run, name, *args: {"artifact": name}) as read:
+            actual, _, _, _, _ = evidence.fetch_evidence(COMMIT, 11, 22)
+        package_calls = [c.args for c in read.call_args_list if len(c.args) == 3]
+        self.assertEqual(package_calls, [(11, "package-install-macos-15-py3.10", "package-install.json"),
+                                         (11, "package-install-macos-15-py3.12", "package-install.json")])
+        for index, call in enumerate(package_calls):
+            self.assertEqual(actual[index], {**verify_jobs[index], "package_install_report": {"artifact": call[1]}})
+            self.assertNotIn("package_install_report", verify_jobs[index])
+        self.assertEqual(actual[2:], verify_jobs[2:])
+
+    def test_partial_failed_duplicate_or_wrong_platform_packaging_proof_is_rejected(self):
+        mac = packaging_job(1)
+        check, upload = mac["steps"]
+        bad = ([check], [upload], [check, upload, upload], [check, {**upload, "conclusion": "skipped"}],
+               [{**check, "status": "in_progress"}, upload])
+        candidates = [[{**mac, "steps": steps}] for steps in bad]
+        candidates.extend((
+            [{**mac, "steps": None}], [{**mac, "conclusion": "failure"}], [{**mac, "labels": ["windows-latest"]}],
+            [{**mac, "labels": ["macos-15", "ubuntu-latest"]}], [packaging_job(2, system="windows-latest")],
+            [mac, packaging_job(2)],
+        ))
+        for jobs in candidates:
+            with self.subTest(jobs=jobs), patch.object(evidence, "_verify_run"), \
+                    patch.object(evidence, "_jobs", side_effect=[jobs, [job(22, 3, "lifecycle")]]), \
+                    patch.object(evidence, "_report") as read, self.assertRaises(ValueError):
+                evidence.fetch_evidence(COMMIT, 11, 22)
+            read.assert_not_called()
+
+    def test_package_download_requires_the_specific_report_file(self):
+        def wrong_file(args):
+            (Path(args[-1]) / "report.json").write_text("{}", encoding="utf-8")
+            return b""
+
+        with patch.object(evidence, "_gh", side_effect=wrong_file), self.assertRaisesRegex(ValueError, "package-install"):
+            evidence._report(11, "package-install-macos-15-py3.12", "package-install.json")
+        with patch.object(evidence, "_verify_run"), \
+                patch.object(evidence, "_jobs", side_effect=[[packaging_job(1)], [job(22, 2, "lifecycle")]]), \
+                patch.object(evidence, "_report", side_effect=ValueError("报告缺失")) as read, self.assertRaises(ValueError):
+            evidence.fetch_evidence(COMMIT, 11, 22)
+        read.assert_called_once_with(11, "package-install-macos-15-py3.12", "package-install.json")
 
     def test_only_observed_native_jobs_read_their_own_named_reports_in_stable_order(self):
         linux = job(22, 1, "lifecycle")

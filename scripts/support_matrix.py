@@ -3,7 +3,7 @@ import argparse
 import re
 import sys
 
-from .support_evidence import NATIVE_TARGETS, PLATFORMS, REPOSITORY, fetch_evidence
+from .support_evidence import NATIVE_TARGETS, PACKAGE_JOB, PLATFORMS, REPOSITORY, fetch_evidence, package_artifact_name
 
 
 REPO_URL = f"https://github.com/{REPOSITORY}"
@@ -34,6 +34,52 @@ def job_link(job, run, os_label, *required_steps):
         if step.get("status") != "completed" or step.get("conclusion") != "success":
             raise ValueError(f"缺少成功的验收步骤：{name}")
     return f"[作业记录]({REPO_URL}/actions/runs/{run}/job/{job['id']})"
+
+
+def mac_package_details(report, series, gateway):
+    """分别校验两个安装环境，只在实际观测值相同时合并显示。"""
+    if (type(report["schema_version"]) is not int or report["schema_version"] != 1
+            or report["scope"] != "CORE_PACKAGE_INSTALL" or report["status"] != "passed"
+            or not isinstance(report["packages"], list) or len(report["packages"]) != 2):
+        raise ValueError("需要两种发行包均通过的独立安装报告")
+    filenames = {"wheel": f"agent_immunity-{gateway}-py3-none-any.whl", "sdist": f"agent_immunity-{gateway}.tar.gz"}
+    environments, hashes = {}, {}
+    for package in report["packages"]:
+        kind = package["kind"]
+        if (kind not in filenames or kind in environments or package["filename"] != filenames[kind]
+                or package["installed_version"] != gateway or not re.fullmatch(r"[a-f0-9]{64}", package["sha256"])
+                or package["policy_check"] != "pass" or package["proxy_ping"] is not True):
+            raise ValueError("归档名、安装版本、SHA-256 或安装后的检查不符")
+        os_version, patch = package["os_version"], package["python"]
+        if (package["system"] != "Darwin" or package["machine"] != "arm64"
+                or not re.fullmatch(r"15\.[0-9]+(?:\.[0-9]+)?", os_version) or package["implementation"] != "CPython"
+                or not re.fullmatch(re.escape(series) + r"\.[0-9]+", patch)):
+            raise ValueError(f"{kind} 的系统、架构或解释器与 macOS 打包作业不符")
+        environments[kind] = f"macOS {os_version} arm64 · CPython {patch}"
+        hashes[kind] = package["sha256"]
+    if hashes["wheel"] == hashes["sdist"]:
+        raise ValueError("wheel 和源码包指向同一归档摘要")
+    environment = environments["wheel"]
+    if environment != environments["sdist"]:
+        environment = f"wheel ({environment}) / sdist ({environments['sdist']})"
+    components = f"wheel `{hashes['wheel'][:12]}` / sdist `{hashes['sdist'][:12]}`"
+    return environment, components
+
+
+def package_row(job, run, gateway):
+    match = PACKAGE_JOB.fullmatch(job["name"])
+    if not match:
+        raise ValueError("无法辨认打包作业的运行器和 Python 系列")
+    system, series = match.groups()
+    evidence = job_link(job, run, system, "测试与模拟规则基准", "检查归档内容、独立安装和 SHA-256")
+    if package_artifact_name(job) is not None:
+        details, components = mac_package_details(job["package_install_report"], series, gateway)
+        environment = f"`{system}` · {details}"
+    else:
+        if "package_install_report" in job:
+            raise ValueError("安装报告缺少对应的验收和上传步骤")
+        environment, components = f"`{system}` · Python {series}", "wheel 和 sdist"
+    return f"| 核心包安装 | {environment} | {components} | 各自在新环境安装，运行策略体检、基准和代理 ping | {evidence} |"
 
 
 def inspector_row(report, job, run, system):
@@ -136,25 +182,23 @@ def render_matrix(commit, verify_run, pilot_run, verify_jobs, interop_reports, p
         raise ValueError("需指定完整的小写提交 SHA 和两个正整数运行编号")
     try:
         jobs = by_name(verify_jobs)
+        gateway = version(pilot_report["gateway_version"])
         rows = []
         # 每个打包作业贡献一行；其他平台的宿主能力不能由打包作业推导。
         axes = []
         for name in jobs:
-            match = re.fullmatch(r"test \(((?:ubuntu|windows|macos)-[a-z0-9.]+), ([0-9]+\.[0-9]+)\)", name)
+            match = PACKAGE_JOB.fullmatch(name)
             if match:
                 axes.append(match.groups())
         if not axes:
             raise ValueError("缺少发行包验收作业")
         for system, python in sorted(axes, key=lambda pair: (pair[0], tuple(map(int, pair[1].split("."))))):
-            evidence = job_link(jobs[f"test ({system}, {python})"], verify_run, system,
-                                "测试与模拟规则基准", "检查归档内容、独立安装和 SHA-256")
-            rows.append(f"| 核心包安装 | `{system}` · Python {python} | wheel 和 sdist | 各自在新环境安装，运行策略体检、基准和代理 ping | {evidence} |")
+            rows.append(package_row(jobs[f"test ({system}, {python})"], verify_run, gateway))
         for system in PLATFORMS:
             rows.append(inspector_row(interop_reports[system], jobs[f"interop ({system})"], verify_run, system))
         if pilot_job["name"] != "lifecycle":
             raise ValueError("缺少基础 Linux 宿主作业")
         rows.append(codex_row(pilot_report, pilot_job, pilot_run))
-        gateway = version(pilot_report["gateway_version"])
         seen = set()
         for job, report in native_pilots:
             name = job["name"]

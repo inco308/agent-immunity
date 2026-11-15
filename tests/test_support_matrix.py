@@ -10,6 +10,7 @@ VERIFY_RUN = 82001
 PILOT_RUN = 82002
 SYSTEMS = ("ubuntu-latest", "windows-latest")
 CORE_STEPS = ("测试与模拟规则基准", "检查归档内容、独立安装和 SHA-256")
+PACKAGE_STEPS = ("核对两个安装环境的 macOS、架构和 Python 系列", "保存 macOS 安装验收报告")
 INSPECTOR_STEP = "真实客户端与 SDK 上游端到端验证"
 PILOT_STEP = "Codex 宿主安装、升级和回退"
 NATIVE_STEP = "核对原生宿主的三阶段证据"
@@ -23,6 +24,19 @@ def job(job_id, name, system, run_id, steps):
         "html_url": f"https://github.com/inco308/agent-immunity/actions/runs/{run_id}/job/{job_id}",
         "steps": [{"name": step, "status": "completed", "conclusion": "success"} for step in steps],
     }
+
+
+def mac_package_job(series="3.12"):
+    entry = job(150, f"test (macos-15, {series})", "macos-15", VERIFY_RUN, (*CORE_STEPS, *PACKAGE_STEPS))
+    packages = []
+    for kind, filename, digest in (("wheel", "agent_immunity-0.3.0a1-py3-none-any.whl", "a" * 64),
+                                   ("sdist", "agent_immunity-0.3.0a1.tar.gz", "b" * 64)):
+        packages.append({"kind": kind, "filename": filename, "sha256": digest, "installed_version": "0.3.0a1",
+                         "implementation": "CPython", "python": series + ".10", "system": "Darwin",
+                         "os_version": "15.8.2", "machine": "arm64", "policy_check": "pass", "proxy_ping": True})
+    entry["package_install_report"] = {"schema_version": 1, "scope": "CORE_PACKAGE_INSTALL",
+                                       "status": "passed", "packages": packages}
+    return entry
 
 
 def inspector_report(python):
@@ -204,6 +218,77 @@ class SupportMatrixTests(unittest.TestCase):
         self.assertIn("/job/150)", row)
         self.assertNotIn("Inspector", row)
         self.assertNotIn("Codex", row)
+        self.assertNotIn("arm64", row)
+
+    def test_package_row_uses_both_installed_environments(self):
+        for difference in ({}, {"python": "3.12.11"}, {"os_version": "15.8.3"}):
+            entry = mac_package_job()
+            packages = entry["package_install_report"]["packages"]
+            packages[1].update(difference)
+            with self.subTest(difference=difference):
+                matrix = self.render(verify_jobs=[*self.jobs, entry])
+                row, = [line for line in matrix.splitlines() if f"/actions/runs/{VERIFY_RUN}/job/150)" in line]
+                for record in packages:
+                    for field in ("kind", "python", "os_version", "machine"):
+                        self.assertIn(record[field], row)
+                    self.assertIn(f"{record['kind']} `{record['sha256'][:12]}`", row)
+                self.assertNotIn("Inspector", row)
+                self.assertNotIn("Codex", row)
+                packages.reverse()
+                self.assertEqual(self.render(verify_jobs=[*self.jobs, entry]), matrix)
+
+    def test_package_job_rejects_missing_evidence_or_wrong_python_series(self):
+        entry = mac_package_job()
+        del entry["package_install_report"]
+        with self.assertRaises(ValueError):
+            self.render(verify_jobs=[*self.jobs, entry])
+        for step_name in PACKAGE_STEPS:
+            entry = mac_package_job()
+            next(step for step in entry["steps"] if step["name"] == step_name)["conclusion"] = "skipped"
+            with self.subTest(step=step_name), self.assertRaises(ValueError):
+                self.render(verify_jobs=[*self.jobs, entry])
+        entry = mac_package_job("3.10")
+        entry["package_install_report"] = mac_package_job("3.12")["package_install_report"]
+        with self.assertRaises(ValueError):
+            self.render(verify_jobs=[*self.jobs, entry])
+        entry = mac_package_job()
+        entry["steps"] = [s for s in entry["steps"] if s["name"] in CORE_STEPS]
+        with self.assertRaises(ValueError):
+            self.render(verify_jobs=[*self.jobs, entry])
+
+    def test_package_receipt_requires_exactly_one_wheel_and_sdist(self):
+        entry = mac_package_job()
+        report = entry["package_install_report"]
+        wheel, source = report["packages"]
+        for bad in ([wheel], [wheel, wheel], [wheel, source, source], [wheel, {**source, "sha256": wheel["sha256"]}]):
+            report["packages"] = bad
+            with self.subTest(kinds=[p["kind"] for p in bad]), self.assertRaises(ValueError):
+                self.render(verify_jobs=[*self.jobs, entry])
+        for field, value in (("schema_version", True), ("status", "failed"), ("scope", "preflight")):
+            entry = mac_package_job()
+            entry["package_install_report"][field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                self.render(verify_jobs=[*self.jobs, entry])
+        entry = mac_package_job()
+        for package in entry["package_install_report"]["packages"]:
+            package["installed_version"] = "0.3.0a2"
+            package["filename"] = package["filename"].replace("0.3.0a1", "0.3.0a2")
+        with self.assertRaises(ValueError):
+            self.render(verify_jobs=[*self.jobs, entry])
+
+    def test_package_receipt_validates_each_archive_and_measured_platform(self):
+        cases = (
+            ("installed_version", "0.3.0a2"), ("filename", "other-archive"), ("sha256", "z" * 64),
+            ("proxy_ping", 1), ("policy_check", "review"), ("system", "Linux"), ("machine", "x86_64"),
+            ("os_version", "14.8.2"), ("python", "3.10.11"), ("implementation", "PyPy"),
+        )
+        for index in (0, 1):
+            for field, value in cases:
+                entry = mac_package_job()
+                record = entry["package_install_report"]["packages"][index]
+                record[field] = value
+                with self.subTest(kind=record["kind"], field=field), self.assertRaises(ValueError):
+                    self.render(verify_jobs=[*self.jobs, entry])
 
     def test_inspector_pass_needs_both_handshake_and_observed_http_request(self):
         missing_handshake = deepcopy(self.reports)
