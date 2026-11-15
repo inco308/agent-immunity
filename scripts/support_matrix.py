@@ -3,6 +3,7 @@ import argparse
 import re
 import sys
 
+from .check_x64_install_report import validate as validate_x64_install
 from .support_evidence import NATIVE_TARGETS, PACKAGE_JOB, PLATFORMS, REPOSITORY, fetch_evidence, package_artifact_name
 
 
@@ -59,6 +60,28 @@ def mac_package_details(report, series, gateway):
         hashes[kind] = package["sha256"]
     if hashes["wheel"] == hashes["sdist"]:
         raise ValueError("wheel 和源码包指向同一归档摘要")
+    return format_package_details(environments, hashes)
+
+
+def x64_package_details(report, runner, series, gateway):
+    """使用生产报告时的校验器，另核对本张矩阵对应的网关版本。"""
+    validate_x64_install(report, runner, series)
+    environments, hashes = {}, {}
+    for package in report["packages"]:
+        if package["installed_version"] != gateway:
+            raise ValueError("安装报告中的网关版本与支持矩阵不符")
+        if runner == "ubuntu-latest":
+            os_text = f"Ubuntu {package['distro_version']}（内核 {package['os_version']}）"
+        else:
+            os_text = f"Windows 内部版本 {package['os_version']}"
+        kind = package["kind"]
+        environments[kind] = (f"{os_text} · {package['python_platform']}（{package['pointer_bits']} 位）"
+                              f" · CPython {package['python']}")
+        hashes[kind] = package["sha256"]
+    return format_package_details(environments, hashes)
+
+
+def format_package_details(environments, hashes):
     environment = environments["wheel"]
     if environment != environments["sdist"]:
         environment = f"wheel ({environment}) / sdist ({environments['sdist']})"
@@ -73,7 +96,11 @@ def package_row(job, run, gateway):
     system, series = match.groups()
     evidence = job_link(job, run, system, "测试与模拟规则基准", "检查归档内容、独立安装和 SHA-256")
     if package_artifact_name(job) is not None:
-        details, components = mac_package_details(job["package_install_report"], series, gateway)
+        report = job["package_install_report"]
+        if system == "macos-15":
+            details, components = mac_package_details(report, series, gateway)
+        else:
+            details, components = x64_package_details(report, system, series, gateway)
         environment = f"`{system}` · {details}"
     else:
         if "package_install_report" in job:
