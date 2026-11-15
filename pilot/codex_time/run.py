@@ -11,7 +11,7 @@ import sys
 import tempfile
 import time
 
-from .host import HOST_VERSION, SERVER_NAME, configured_command, host_stage
+from .host import GatewayStartupError, HOST_VERSION, SERVER_NAME, configured_command, host_stage
 
 REPO = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
@@ -37,10 +37,15 @@ def atomic_write(path, data):
         temporary.unlink(missing_ok=True)
 
 
-def registration(gateway, policy, upstream):
-    args = ["-I", "-m", "agent_immunity.mcp_stdio", "--policy", str(policy), "--timeout", "15",
+def registration(gateway, policy, upstream, *, exit_marker=None):
+    entry = ["-m", "agent_immunity.mcp_stdio"] if exit_marker is None else [str(HERE / "startup_probe.py"), str(exit_marker)]
+    args = ["-I", *entry, "--policy", str(policy), "--timeout", "15",
             "--", upstream, "-I", "-m", "mcp_server_time", "--local-timezone", "UTC"]
     return {"command": gateway, "args": args}
+
+
+def startup_fault_registration(gateway, root, upstream):
+    return registration(gateway, root / "absent-candidate-policy.json", upstream, exit_marker=root / "candidate-exit.txt")
 
 
 def config_bytes(target):
@@ -156,9 +161,43 @@ def run(args):
     def save():
         atomic_write(report_path, (json.dumps(report, ensure_ascii=False, indent=2) + "\n").encode())
 
+    def save_failure():
+        try:
+            save()
+        except Exception as save_error:
+            print(f"无法保存失败报告（{type(save_error).__name__}）", file=sys.stderr)
+
+    def exercise(phase, slot, target, config, *, restoring=False):
+        """用活动配置启动新宿主，并在调用前后核对策略和安装。"""
+        started = time.monotonic()
+        identity = gateway_identity(slots[slot], root) if slots else None
+        if restoring and identity != report["stages"][-1].get("gateway"):
+            raise ValueError("恢复的安装与先前通过宿主验收的构建不同")
+        if digest(policy.read_bytes()) != report["policy_sha256"]:
+            raise ValueError("宿主调用前的策略与初始策略不同")
+        if not restoring:
+            atomic_write(active, config)
+        if active.read_bytes() != config:
+            raise ValueError("活动配置与本次准备核验的配置不同")
+        verify_registration(executable, target, project)
+        result = host_stage(executable, project, expect_weekday=slot == "candidate")
+        if active.read_bytes() != config or digest(policy.read_bytes()) != report["policy_sha256"]:
+            raise RuntimeError("宿主配置或策略在演练过程中被改变")
+        if slots:
+            if gateway_identity(slots[slot], root) != identity:
+                raise ValueError("宿主调用前后的网关安装证据不一致")
+            result = {**result, "gateway": identity}
+        return {"phase": phase, "version": VERSIONS[slot], "config_sha256": digest(config),
+                "elapsed_seconds": round(time.monotonic() - started, 3), **result}
+
     save()
     verified = None
+    simulate = getattr(args, "simulate_candidate_startup_failure", False)
+    marker = root / "candidate-exit.txt"
+    absent_policy = root / "absent-candidate-policy.json"
     try:
+        if simulate and args.preflight_only:
+            raise ValueError("候选启动故障演练需要运行宿主")
         slots = verified_slots(environment, getattr(args, "require_verified_gateways", False))
         report["mcp_sdk"] = environment["versions"]["mcp"]
         if slots:
@@ -194,21 +233,15 @@ def run(args):
                 raise ValueError("前后版本必须安装在不同环境")
             for phase, slot in (("install", "previous"), ("upgrade", "candidate"), ("rollback", "previous")):
                 report["attempted_phase"] = phase
-                started = time.monotonic()
                 target = targets[slot]
-                identity = gateway_identity(slots[slot], root) if slots else None
+                if simulate and phase == "upgrade":
+                    # 让候选网关实际尝试加载缺失的策略。探针只记录其真实退出码。
+                    target = startup_fault_registration(target["command"], root, environment[slot])
                 config = config_bytes(target)
-                atomic_write(active, config)
-                verify_registration(executable, target, project)
-                result = host_stage(executable, project, expect_weekday=slot == "candidate")
-                if active.read_bytes() != config:
-                    raise RuntimeError("宿主配置在演练过程中被改变")
-                if slots:
-                    if gateway_identity(slots[slot], root) != identity:
-                        raise ValueError("宿主调用前后的网关安装证据不一致")
-                    result = {**result, "gateway": identity}
-                report["stages"].append({"phase": phase, "version": VERSIONS[slot], "config_sha256": digest(config),
-                                         "elapsed_seconds": round(time.monotonic() - started, 3), **result})
+                stage = exercise(phase, slot, target, config)
+                if simulate and phase == "upgrade":
+                    raise RuntimeError("演练中的候选网关意外通过了宿主验收")
+                report["stages"].append(stage)
                 try:
                     save()
                 except BaseException:
@@ -220,18 +253,40 @@ def run(args):
     except (Exception, KeyboardInterrupt, SystemExit) as exc:
         report["status"] = "failed"
         report["failure_type"] = type(exc).__name__
+        reconnect = (isinstance(exc, GatewayStartupError) and report.get("attempted_phase") == "upgrade"
+                     and verified is not None and report["stages"][-1]["phase"] == "install")
+        if reconnect:
+            report["host_startup_state"] = exc.state
+            if simulate:
+                try:
+                    if not absent_policy.exists() and marker.read_bytes().splitlines() == [b"2"] and active.read_bytes() == config:
+                        report["fault"] = {"kind": "missing_candidate_policy", "exit_code": 2,
+                                           "config_sha256": digest(config)}
+                except OSError:
+                    pass  # 缺少故障证据时仍尝试恢复；独立演练验收要求该证据存在。
         try:
             if verified is None:
                 active.unlink(missing_ok=True)
             else:
                 atomic_write(active, verified)
+                if active.read_bytes() != verified:
+                    raise ValueError("写回的配置与最近通过验收的配置不同")
                 report["restored_verified_config_sha256"] = digest(verified)
         except Exception as rollback_error:
             report["rollback_error_type"] = type(rollback_error).__name__
-        try:
-            save()
-        except Exception as save_error:
-            print(f"无法保存失败报告（{type(save_error).__name__}）", file=sys.stderr)
+        else:
+            if reconnect:
+                report["recovery"] = {"status": "running"}
+                save_failure()
+                try:
+                    result = exercise("recovery", "previous", targets["previous"], verified, restoring=True)
+                    report["recovery"] = {**result, "status": "passed"}
+                except (Exception, KeyboardInterrupt, SystemExit) as recovery_error:
+                    report["recovery"] = {"status": "failed", "error_type": type(recovery_error).__name__}
+                    if isinstance(recovery_error, (KeyboardInterrupt, SystemExit)):
+                        save_failure()
+                        raise
+        save_failure()
         if isinstance(exc, (KeyboardInterrupt, SystemExit)):
             raise
         print(f"演练失败（{report['failure_type']}）  {report_path}", file=sys.stderr)
@@ -247,4 +302,6 @@ if __name__ == "__main__":
     parser.add_argument("--codex", default="codex")
     parser.add_argument("--preflight-only", action="store_true", help="仅验收第三方目录与安装后的策略检查器")
     parser.add_argument("--require-verified-gateways", action="store_true", help="只接受两个已核验预览构建的环境描述")
+    parser.add_argument("--simulate-candidate-startup-failure", action="store_true",
+                        help="让候选网关加载缺失的策略，并验证重新连接原构建后的业务和权限")
     raise SystemExit(run(parser.parse_args()))

@@ -53,7 +53,24 @@ python -X utf8 -m pilot.codex_time.run --codex pilot/codex_time/node_modules/.bi
 
 收据和安装文件的对照依赖受信的本机解释器、试点目录和 GitHub 构建记录。文件核对覆盖 wheel 中的 `agent_immunity/` 运行文件和发行元数据 `METADATA`，解释器生成的 `__pycache__/*.pyc` 缓存不计入文件数。宿主结果提供调用行为证据。证明调用期间的进程内存完整性需要额外的观测手段。
 
-两种演练的 `report.json` 都含各阶段版本、工具名、UTC/东京转换结果、星期字段是否存在、拒绝码、配置摘要和耗时。初始与回退的配置摘要应一致，升级摘要应与它们不同。任一阶段发生异常时，运行器记录 `failed` 和失败类型，恢复最近通过验收的项目配置，并返回非零。判断恢复到哪个构建时，应核对失败阶段与最近一次成功阶段。如果首次验收就失败，则移除本次尚未通过验收的配置；若恢复本身失败，报告另记 `rollback_error_type`。文件恢复后仍要重新连接进行业务验收。
+两种演练的 `report.json` 都含各阶段版本、工具名、UTC/东京转换结果、星期字段是否存在、拒绝码、配置摘要和耗时。初始与回退的配置摘要应一致，升级摘要应与它们不同。任一阶段发生异常时，运行器记录 `failed` 和失败类型，并尝试写回最近通过验收的项目配置。首次安装未完成时会移除本次配置。写回失败时，报告另记 `rollback_error_type`。
+
+### 候选网关启动失败后的恢复
+
+初装已通过、候选升级出现连接失败或工具发现轮询耗尽时，运行器恢复初装配置，重新读取 Codex 注册，再启动一次新的 App Server 和临时线程。它核对策略、可见工具、一次 UTC 到东京的实际转换，以及同会话重复调用被拒绝的结果。在双预览模式下，还会在业务调用前后核对原构建的安装文件和收据。用户取消、认证问题及其他类型的错误保留各自的失败信息。
+
+可使用前文准备的双预览环境重现。下面的 Bash 命令在新项目内让候选网关读取缺失的策略文件，保存网关的实际退出码，并单独验收恢复结果。两条命令应在同一台机器、同一份工作树中运行。
+
+```bash
+status=0
+python -X utf8 -m pilot.codex_time.run --codex pilot/codex_time/node_modules/.bin/codex \
+  --environment artifacts/verified-pilot/environment.json --require-verified-gateways \
+  --output-dir artifacts/recovery-run --simulate-candidate-startup-failure || status=$?
+python -X utf8 -m pilot.codex_time.check_recovery --runner-exit-code "$status" \
+  --environment artifacts/verified-pilot/environment.json --output-dir artifacts/recovery-run
+```
+
+升级失败时，运行器返回 `1`，顶层 `status` 为 `failed`。此次演练还要求候选进程退出码为 `2`，且宿主确实未能连接候选网关。只有原配置、原业务和原策略均复验成功，报告才写入 `recovery.status=passed`。运行器尝试重连一次，重连失败的原因记在 `recovery.error_type`。工作流在 `codex-time-recovery` 产物中保存演练证据。该结果覆盖试点运行器新建会话后的恢复，已有编辑器会话中的在途任务仍需单独验证。
 
 ## 在平时使用的编码宿主中接入
 
