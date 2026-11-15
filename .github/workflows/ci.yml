@@ -7,7 +7,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-15]
         python: ["3.10", "3.12"]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
@@ -26,7 +26,32 @@ jobs:
       - name: 构建源码分发包及其 wheel
         run: python -m build --outdir dist
       - name: 检查归档内容、独立安装和 SHA-256
-        run: python -X utf8 scripts/check_dist.py dist
+        run: python -X utf8 scripts/check_dist.py dist --report artifacts/package-install.json
+      - name: 核对两个安装环境的 macOS、架构和 Python 系列
+        if: matrix.os == 'macos-15'
+        shell: pwsh
+        env:
+          EXPECTED_PYTHON_SERIES: ${{ matrix.python }}
+        run: |
+          $report = Get-Content -Raw artifacts/package-install.json | ConvertFrom-Json
+          if ($report.status -cne 'passed' -or ($report.packages.kind -join ',') -cne 'wheel,sdist') {
+            throw '需要两份发行文件均完成安装验收'
+          }
+          foreach ($package in $report.packages) {
+            if ($package.system -cne 'Darwin' -or $package.os_version -notlike '15.*' -or
+                $package.machine -cne 'arm64' -or $package.implementation -cne 'CPython' -or
+                !$package.python.StartsWith("$env:EXPECTED_PYTHON_SERIES.")) {
+              throw "安装环境与 macOS 15 arm64 / CPython $env:EXPECTED_PYTHON_SERIES 不符"
+            }
+            Write-Output "$($package.kind): macOS $($package.os_version) $($package.machine), CPython $($package.python)"
+          }
+      - name: 保存 macOS 安装验收报告
+        if: matrix.os == 'macos-15'
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: package-install-macos-15-py${{ matrix.python }}
+          path: artifacts/package-install.json
+          if-no-files-found: error
       - name: 保存可下载的发行文件
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
         uses: actions/upload-artifact@v7.0.2

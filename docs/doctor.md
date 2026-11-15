@@ -27,6 +27,19 @@ python -m agent_immunity.doctor --policy examples/policy.json --catalog artifact
 
 报告含本地登记的工具名、字段名和固定诊断码。它不包含参数实值、完整命令或整份目录。通过检查后仍需要验证工具实际使用哪些文件、地址或子进程，以及运行账户能做什么。采集完到实际调用之间的上游变化，需要在升级时重新检查。
 
+## 复核 wheel 和源码包的安装环境
+
+在仓库根目录运行下面两条命令。构建需要 Python 的 `build` 前端和项目声明的构建后端。请使用仅包含本次发行文件的输出目录。
+
+```text
+python -m build --outdir artifacts/core-dist
+python -X utf8 scripts/check_dist.py artifacts/core-dist --report artifacts/package-install.json
+```
+
+脚本在仓库外创建两个虚拟环境，分别安装 wheel 和源码包，核对网关模块与发行元数据的导入位置和版本，再运行策略体检、基准和代理 `ping`。两个环境均通过后，脚本将 `SHA256SUMS` 写入发行目录，并将 JSON 报告写到 `--report` 指定的外部路径。两条记录分别给出归档名、SHA-256、安装版本，以及该环境中实际运行的 Python、系统版本和架构。请同时核对本次命令的退出码，失败时原有报告会保留。
+
+查看 macOS CI 时，在对应的 `test (macos-15, 3.10)` 或 `test (macos-15, 3.12)` 作业中检查实际环境。每个作业还保存一份 `package-install-macos-15-py<系列>` 报告。验收范围是 Apple Silicon 上的核心包安装和启动，编码宿主互操作有单独的试点。
+
 ## 获取开发者预览包
 
 在对应提交的 GitHub Actions `verify` 页面下载 `agent-immunity-dist` 并解压。在该目录用 `sha256sum -c SHA256SUMS`，或在 PowerShell 中用 `Get-FileHash -Algorithm SHA256` 核对 wheel 与源码包摘要。在新的虚拟环境执行以下命令即可试用本轮版本。
