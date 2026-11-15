@@ -13,7 +13,6 @@ import tempfile
 import time
 
 from .host import HOST_VERSION, SERVER_NAME, configured_command, host_stage
-from .windows_arch import require_windows_x64_executable
 
 REPO = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
@@ -88,6 +87,8 @@ def macos_host_environment(executable, environment, root):
 def windows_host_environment(executable, environment, root):
     if platform.system() != "Windows" or not (os_version := platform.win32_ver()[1]):
         raise ValueError("Windows x64 宿主演练需要实际的 Windows 系统版本")
+    from .windows_arch import require_windows_x64_executable
+
     require_windows_x64_executable(executable)
     return {"system": "Windows", "os_version": os_version, "codex_arch": "x64",
             "pythons": native_pythons(environment, root, "AMD64", "win-amd64")}

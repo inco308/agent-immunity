@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from pilot.codex_time import run as pilot
+from pilot.codex_time import windows_arch
 
 
 class WindowsHostEnvironmentTests(unittest.TestCase):
@@ -25,7 +26,7 @@ class WindowsHostEnvironmentTests(unittest.TestCase):
         self.system = stack.enter_context(patch.object(pilot.platform, "system", return_value="Windows"))
         self.os_version = stack.enter_context(patch.object(pilot.platform, "win32_ver",
                                                           return_value=("2025Server", "10.0.26100", "", "")))
-        self.native = stack.enter_context(patch.object(pilot, "require_windows_x64_executable"))
+        self.native = stack.enter_context(patch.object(windows_arch, "require_windows_x64_executable"))
         self.command = stack.enter_context(patch.object(pilot, "run_command", side_effect=self.respond))
 
     def respond(self, args, cwd):
