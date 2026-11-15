@@ -92,18 +92,27 @@ class StdioProxy:
             pass
 
     def fail(self, code, message, *, request_id=None):
+        uncertain = False
         if request_id is None and self.pending:
             request_id = self.pending["id"]
+            uncertain = self.pending.get("call") is not None
         self.engine.abort()
         self.pending = None
         self.running = False
         self.exit_code = 1
         if request_id is not None:
-            self.emit(error(request_id, code, message))
+            reply = error(request_id, code, message)
+            if uncertain:
+                # 入队后写线程可能已交付请求。通信失败无法证明操作是否生效。
+                reply["error"]["message"] += "。工具调用结果未知，请先核对实际状态，勿自动重试。"
+                reply["error"]["data"] = {"agent_immunity": {"outcome": "unknown", "automatic_retry": False}}
+            self.emit(reply)
 
     def dispatch(self, message, call=None):
-        self.pending = {"id": message["id"], "method": message["method"], "call": call, "deadline": time.monotonic() + self.timeout}
+        self.pending = {"id": message["id"], "method": message["method"], "deadline": time.monotonic() + self.timeout}
         self.send(message)
+        # 先保留 ID 用于报告本地发送失败，只有成功入队的工具请求才可能已执行。
+        self.pending["call"] = call
 
     def client_message(self, req):
         if not isinstance(req, dict) or req.get("jsonrpc") != "2.0" or not isinstance(req.get("method"), str):
@@ -127,14 +136,14 @@ class StdioProxy:
         if not valid_id(call_id):
             self.emit(error(None, -32600, "请求 ID 必须为字符串或整数"))
             return
+        if self.pending and type(call_id) is type(self.pending["id"]) and call_id == self.pending["id"]:
+            self.fail(-32600, "重复的在途请求 ID")
+            return
         if not isinstance(params, dict):
             self.emit(error(call_id, -32602, "params 必须为对象"))
             return
         if "_meta" in params and not isinstance(params["_meta"], dict):
             self.emit(error(call_id, -32602, "请求元数据必须为对象"))
-            return
-        if self.pending and type(call_id) is type(self.pending["id"]) and call_id == self.pending["id"]:
-            self.fail(-32600, "重复的在途请求 ID")
             return
         if method == "ping":
             self.emit({"jsonrpc": "2.0", "id": call_id, "result": {}})
@@ -241,8 +250,8 @@ class StdioProxy:
             if self.engine.closed:
                 self.running = False
                 self.exit_code = 1
-        self.emit({"jsonrpc": "2.0", "id": pending["id"], "result": result})
         self.pending = None
+        self.emit({"jsonrpc": "2.0", "id": pending["id"], "result": result})
 
     def run(self):
         try:

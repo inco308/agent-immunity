@@ -63,6 +63,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: 真实客户端与 SDK 上游端到端验证
         run: python -X utf8 interop/run_e2e.py
+      - name: SDK 写入后断线与只读重连验收
+        run: python -X utf8 -m interop.uncertain_call
       - name: 上游目录采集与预部署检查
         shell: pwsh
         run: |
@@ -82,4 +84,5 @@ jobs:
           path: |
             artifacts/interop/report.json
             artifacts/interop/status-report.md
+            artifacts/interop/uncertain-call.json
           if-no-files-found: warn
