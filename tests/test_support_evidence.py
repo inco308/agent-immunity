@@ -31,6 +31,12 @@ def packaging_job(number, system="macos-15", python="3.12", conclusion="success"
     return {**job(11, number, f"test ({system}, {python})"), "labels": [system], "steps": steps}
 
 
+def x64_steps(conclusion="success"):
+    return [{"name": name, "status": "completed", "conclusion": conclusion} for name in (
+        "核对两个安装环境的 x64 系统、架构和 Python 系列", "保存 x64 安装验收报告",
+    )]
+
+
 class SupportEvidenceTests(unittest.TestCase):
     def test_only_expected_attempts_and_three_scoped_artifacts_are_read(self):
         verify_jobs = [job(11, 1, "first"), job(11, 2, "second")]
@@ -106,6 +112,55 @@ class SupportEvidenceTests(unittest.TestCase):
                     patch.object(evidence, "_report") as read, self.assertRaises(ValueError):
                 evidence.fetch_evidence(COMMIT, 11, 22)
             read.assert_not_called()
+
+    def test_x64_and_mac_jobs_only_download_their_own_reports(self):
+        jobs = []
+        expected = []
+        for runner in ("ubuntu-latest", "windows-latest", "macos-15"):
+            mac = runner == "macos-15"
+            for series in ("3.10", "3.12"):
+                record = packaging_job(len(jobs) + 1, runner, series, "success" if mac else "skipped")
+                record["steps"].extend(x64_steps("skipped" if mac else "success"))
+                jobs.append(record)
+                expected.append((11, f"package-install-{runner}-py{series}", "package-install.json"))
+        legacy = packaging_job(7, "ubuntu-latest", "3.11", "skipped")
+        pilot = job(22, 8, "lifecycle")
+        with patch.object(evidence, "_verify_run") as gate, \
+                patch.object(evidence, "_jobs", side_effect=[[*jobs, legacy], [pilot]]), \
+                patch.object(evidence, "_report", side_effect=lambda run, name, *args: {"source": name}) as read:
+            selected, _, _, _, _ = evidence.fetch_evidence(COMMIT, 11, 22)
+        self.assertEqual([c.args for c in read.call_args_list if len(c.args) == 3], expected)
+        for selected_job, (_, artifact, _) in zip(selected, expected):
+            self.assertEqual(selected_job["package_install_report"], {"source": artifact})
+        self.assertEqual(selected[-1], legacy)
+        self.assertEqual([c.args for c in gate.call_args_list],
+                         [(COMMIT, 11, "ci"), (COMMIT, 22, "codex-time-pilot")] * 2)
+
+    def test_incomplete_skipped_or_cross_platform_x64_steps_are_not_evidence(self):
+        linux = packaging_job(1, "ubuntu-latest", conclusion="skipped")
+        check, upload = x64_steps()
+        for steps in ([check], [upload], [check, check, upload], [check, {**upload, "status": "in_progress"}],
+                      x64_steps("skipped"), x64_steps("failure"), x64_steps() + packaging_job(1)["steps"]):
+            with self.subTest(steps=steps), self.assertRaises(ValueError):
+                evidence.package_artifact_name({**linux, "steps": steps})
+        mac = packaging_job(2)
+        for steps in (x64_steps(), x64_steps("skipped")[:1], [check, {**upload, "conclusion": "skipped"}]):
+            with self.subTest(steps=steps), self.assertRaises(ValueError):
+                evidence.package_artifact_name({**mac, "steps": mac["steps"] + steps})
+        for runner in ("ubuntu-latest", "windows-latest"):
+            record = packaging_job(3, runner, conclusion="skipped")
+            record["steps"].extend(x64_steps())
+            with self.subTest(runner=runner):
+                with self.assertRaises(ValueError):
+                    evidence.package_artifact_name({**record, "labels": ["macos-15"]})
+                with self.assertRaises(ValueError):
+                    evidence.package_artifact_name({**record, "conclusion": "failure"})
+                with patch.object(evidence, "_verify_run"), \
+                        patch.object(evidence, "_jobs", side_effect=[[record], [job(22, 4, "lifecycle")]]), \
+                        patch.object(evidence, "_report", side_effect=ValueError("报告缺失")) as read:
+                    with self.assertRaisesRegex(ValueError, "报告缺失"):
+                        evidence.fetch_evidence(COMMIT, 11, 22)
+                    read.assert_called_once_with(11, f"package-install-{runner}-py3.12", "package-install.json")
 
     def test_package_download_requires_the_specific_report_file(self):
         def wrong_file(args):

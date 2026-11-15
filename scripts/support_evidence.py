@@ -13,7 +13,10 @@ REPOSITORY_ID = 1381124176
 RUNS_API = f"repos/{REPOSITORY}/actions/runs"
 PLATFORMS = ("ubuntu-latest", "windows-latest")
 PACKAGE_JOB = re.compile(r"test \(((?:ubuntu|windows|macos)-[a-z0-9.]+), ([0-9]+\.[0-9]+)\)")
-PACKAGE_REPORT_STEPS = ("核对两个安装环境的 macOS、架构和 Python 系列", "保存 macOS 安装验收报告")
+PACKAGE_REPORT_CONTRACTS = (
+    (("macos-15",), ("核对两个安装环境的 macOS、架构和 Python 系列", "保存 macOS 安装验收报告")),
+    (("ubuntu-latest", "windows-latest"), ("核对两个安装环境的 x64 系统、架构和 Python 系列", "保存 x64 安装验收报告")),
+)
 NATIVE_TARGETS = {
     "lifecycle-macos-arm64": ("macos-15", "codex-time-lifecycle-macos-arm64"),
     "lifecycle-windows-x64": ("windows-2025", "codex-time-lifecycle-windows-x64"),
@@ -100,23 +103,27 @@ def package_artifact_name(job):
     all_steps = job.get("steps")
     if not isinstance(all_steps, list) or not all(isinstance(s, dict) and isinstance(s.get("name"), str) for s in all_steps):
         raise ValueError("打包作业缺少有效的步骤列表")
-    steps = [s for s in all_steps if s["name"] in PACKAGE_REPORT_STEPS]
-    if not steps:
+    requires_report = False
+    for runners, expected_steps in PACKAGE_REPORT_CONTRACTS:
+        steps = [s for s in all_steps if s["name"] in expected_steps]
+        if not steps:
+            continue
+        if sorted(s["name"] for s in steps) != sorted(expected_steps):
+            raise ValueError("安装报告核对或上传步骤缺失或重复")
+        applicable = system in runners
+        conclusion = "success" if applicable else "skipped"
+        if not all(_matches(s, {"status": "completed", "conclusion": conclusion}) for s in steps):
+            raise ValueError("安装报告步骤状态与打包作业平台不符")
+        requires_report = requires_report or applicable
+    if not requires_report:
         return None
-    if sorted(s["name"] for s in steps) != sorted(PACKAGE_REPORT_STEPS):
-        raise ValueError("安装报告核对或上传步骤缺失或重复")
-    if system != "macos-15":
-        if all(_matches(s, {"status": "completed", "conclusion": "skipped"}) for s in steps):
-            return None
-        raise ValueError("macOS 安装报告步骤与打包作业平台不符")
     labels = job.get("labels")
     if not isinstance(labels, list) or [label for label in labels if isinstance(label, str)
                                         and label.startswith(("macos-", "ubuntu-", "windows-"))] != [system]:
-        raise ValueError("macOS 安装报告作业的运行器标签不符")
-    passed = {"status": "completed", "conclusion": "success"}
-    if not _matches(job, passed) or not all(_matches(s, passed) for s in steps):
-        raise ValueError("macOS 打包作业及两个安装报告步骤需全部成功")
-    return f"package-install-macos-15-py{python}"
+        raise ValueError("安装报告作业的运行器标签不符")
+    if not _matches(job, {"status": "completed", "conclusion": "success"}):
+        raise ValueError("打包作业未成功完成")
+    return f"package-install-{system}-py{python}"
 
 
 def _report(run_id, name, filename="report.json"):

@@ -11,6 +11,7 @@ PILOT_RUN = 82002
 SYSTEMS = ("ubuntu-latest", "windows-latest")
 CORE_STEPS = ("测试与模拟规则基准", "检查归档内容、独立安装和 SHA-256")
 PACKAGE_STEPS = ("核对两个安装环境的 macOS、架构和 Python 系列", "保存 macOS 安装验收报告")
+X64_PACKAGE_STEPS = ("核对两个安装环境的 x64 系统、架构和 Python 系列", "保存 x64 安装验收报告")
 INSPECTOR_STEP = "真实客户端与 SDK 上游端到端验证"
 PILOT_STEP = "Codex 宿主安装、升级和回退"
 NATIVE_STEP = "核对原生宿主的三阶段证据"
@@ -26,16 +27,33 @@ def job(job_id, name, system, run_id, steps):
     }
 
 
-def mac_package_job(series="3.12"):
-    entry = job(150, f"test (macos-15, {series})", "macos-15", VERIFY_RUN, (*CORE_STEPS, *PACKAGE_STEPS))
+def install_report(series, environment):
     packages = []
     for kind, filename, digest in (("wheel", "agent_immunity-0.3.0a1-py3-none-any.whl", "a" * 64),
                                    ("sdist", "agent_immunity-0.3.0a1.tar.gz", "b" * 64)):
         packages.append({"kind": kind, "filename": filename, "sha256": digest, "installed_version": "0.3.0a1",
-                         "implementation": "CPython", "python": series + ".10", "system": "Darwin",
-                         "os_version": "15.8.2", "machine": "arm64", "policy_check": "pass", "proxy_ping": True})
-    entry["package_install_report"] = {"schema_version": 1, "scope": "CORE_PACKAGE_INSTALL",
-                                       "status": "passed", "packages": packages}
+                         "implementation": "CPython", "python": series + ".10", "policy_check": "pass",
+                         "proxy_ping": True, **environment})
+    return {"schema_version": 1, "scope": "CORE_PACKAGE_INSTALL", "status": "passed", "packages": packages}
+
+
+def mac_package_job(series="3.12"):
+    entry = job(150, f"test (macos-15, {series})", "macos-15", VERIFY_RUN, (*CORE_STEPS, *PACKAGE_STEPS))
+    entry["package_install_report"] = install_report(series, {"system": "Darwin", "os_version": "15.8.2", "machine": "arm64"})
+    return entry
+
+
+def x64_package_job(runner, series="3.12", job_id=160):
+    entry = job(job_id, f"test ({runner}, {series})", runner, VERIFY_RUN, (*CORE_STEPS, *PACKAGE_STEPS, *X64_PACKAGE_STEPS))
+    for step in entry["steps"]:
+        if step["name"] in PACKAGE_STEPS:
+            step["conclusion"] = "skipped"
+    if runner == "ubuntu-latest":
+        env = {"system": "Linux", "os_version": "7.0.0-1019-azure", "distro_id": "ubuntu", "distro_version": "26.04",
+               "machine": "x86_64", "python_platform": "linux-x86_64"}
+    else:
+        env = {"system": "Windows", "os_version": "10.0.26100", "machine": "AMD64", "python_platform": "win-amd64"}
+    entry["package_install_report"] = install_report(series, {**env, "pointer_bits": 64})
     return entry
 
 
@@ -255,6 +273,96 @@ class SupportMatrixTests(unittest.TestCase):
         entry["steps"] = [s for s in entry["steps"] if s["name"] in CORE_STEPS]
         with self.assertRaises(ValueError):
             self.render(verify_jobs=[*self.jobs, entry])
+
+    def test_x64_install_evidence_enriches_only_its_existing_package_row(self):
+        jobs = [entry for entry in self.jobs if entry["name"].startswith("interop")]
+        measured = []
+        for runner in SYSTEMS:
+            for series in ("3.10", "3.12"):
+                measured.append(x64_package_job(runner, series, 160 + len(measured)))
+        legacy = self.render()
+        matrix = self.render(verify_jobs=[*jobs, *measured])
+        self.assertEqual(matrix.count("/job/"), legacy.count("/job/"))
+        for line in legacy.splitlines():
+            if "/job/" in line and "核心包安装" not in line:
+                self.assertIn(line, matrix.splitlines())
+        for entry in measured:
+            row, = [line for line in matrix.splitlines() if f"/actions/runs/{VERIFY_RUN}/job/{entry['id']})" in line]
+            for p in entry["package_install_report"]["packages"]:
+                for field in ("os_version", "python_platform", "python"):
+                    self.assertIn(p[field], row)
+                self.assertIn(f"{p['kind']} `{p['sha256'][:12]}`", row)
+                if p["system"] == "Linux":
+                    self.assertIn("Ubuntu " + p["distro_version"], row)
+            self.assertNotIn("Codex", row)
+            self.assertNotIn("Inspector", row)
+
+    def test_changes_to_only_one_archives_environment_are_visible(self):
+        for runner, field, updated in (("ubuntu-latest", "distro_version", "24.04"),
+                                       ("ubuntu-latest", "os_version", "6.17.0-1009-azure"),
+                                       ("windows-latest", "os_version", "10.0.26100.23"),
+                                       ("windows-latest", "python", "3.12.22")):
+            entry = x64_package_job(runner)
+            wheel, source = entry["package_install_report"]["packages"]
+            source[field] = updated
+            jobs = [j for j in self.jobs if j["name"] != entry["name"]]
+            with self.subTest(runner=runner, field=field):
+                matrix = self.render(verify_jobs=[*jobs, entry])
+                row, = [line for line in matrix.splitlines() if "/job/160)" in line]
+                environment = row.split("|")[2]
+                self.assertIn("wheel", environment)
+                self.assertIn("sdist", environment)
+                self.assertIn(wheel[field], environment.split("sdist")[0])
+                self.assertIn(source[field], environment.split("sdist")[1])
+
+    def test_each_x64_archive_requires_matching_machine_tag_bit_width_and_result(self):
+        for runner in SYSTEMS:
+            jobs = [j for j in self.jobs if j["name"] != f"test ({runner}, 3.12)"]
+            cases = [("pointer_bits", 32), ("pointer_bits", 64.0), ("pointer_bits", "64"), ("machine", "arm64"),
+                     ("python_platform", "win32"), ("python", "3.10.11"), ("implementation", "PyPy"),
+                     ("filename", "other.whl"), ("policy_check", "review"), ("proxy_ping", 1)]
+            if runner == "ubuntu-latest":
+                cases.extend([("distro_id", "debian"), ("distro_version", "7.0.0-1019-azure"),
+                              ("os_version", "7.0.0|other column")])
+            else:
+                cases.append(("os_version", "Windows Server 2025"))
+            for index in (0, 1):
+                for field, wrong in cases:
+                    entry = x64_package_job(runner)
+                    entry["package_install_report"]["packages"][index][field] = wrong
+                    with self.subTest(runner=runner, kind=index, field=field, value=wrong), self.assertRaises(ValueError):
+                        self.render(verify_jobs=[*jobs, entry])
+
+    def test_missing_or_swapped_x64_receipts_cannot_fall_back_to_job_labels(self):
+        entry = x64_package_job("windows-latest")
+        jobs = [j for j in self.jobs if j["name"] != entry["name"]]
+        del entry["package_install_report"]
+        with self.assertRaises(ValueError):
+            self.render(verify_jobs=[*jobs, entry])
+        entry["package_install_report"] = x64_package_job("ubuntu-latest")["package_install_report"]
+        with self.assertRaises(ValueError):
+            self.render(verify_jobs=[*jobs, entry])
+        entry = x64_package_job("windows-latest")
+        # 同版本的两份有效安装也须属于本矩阵选择的网关版本。
+        for package in entry["package_install_report"]["packages"]:
+            package["installed_version"] = "0.3.0a2"
+            package["filename"] = package["filename"].replace("0.3.0a1", "0.3.0a2")
+        with self.assertRaises(ValueError):
+            self.render(verify_jobs=[*jobs, entry])
+
+    def test_inactive_platform_steps_preserve_previous_receipts_and_label_only_rows(self):
+        previous = mac_package_job()
+        current = deepcopy(previous)
+        current["steps"].extend({"name": name, "status": "completed", "conclusion": "skipped"}
+                                for name in X64_PACKAGE_STEPS)
+        for record in current["package_install_report"]["packages"]:
+            record.update(pointer_bits=64, python_platform="macosx-11.0-arm64")
+        old_x64_jobs = deepcopy(self.jobs)
+        for entry in old_x64_jobs:
+            if entry["name"].startswith("test ("):
+                entry["steps"].extend({"name": name, "status": "completed", "conclusion": "skipped"}
+                                      for name in PACKAGE_STEPS)
+        self.assertEqual(self.render(verify_jobs=[*old_x64_jobs, current]), self.render(verify_jobs=[*self.jobs, previous]))
 
     def test_package_receipt_requires_exactly_one_wheel_and_sdist(self):
         entry = mac_package_job()

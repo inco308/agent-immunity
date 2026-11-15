@@ -38,7 +38,9 @@ python -X utf8 -m scripts.support_matrix --commit 7328ca6949dcade4bbf186c827c3ee
 
 核心包行有两种证据来源。历史作业的安装验收通过时，行中列出运行器标签和 Python 系列。有独立安装报告的作业，还会列出 wheel 与源码包各自测到的系统、架构和 Python 补丁版本。两份环境相同时合并显示，有差异时按包分别显示。
 
-对于 `macos-15` 作业，生成器核对环境检查和报告上传步骤，再从同一次 `verify` 运行的 `package-install-macos-15-py<系列>` 产物中读取 `package-install.json`。每种包都要有与矩阵网关版本对应的文件名、安装版本、完整 SHA-256、通过的策略体检和代理 `ping`。作业选定的 Python 系列须与两个独立安装环境的实测值匹配。
+生成器按作业选择 `macos-15`、`ubuntu-latest` 或 `windows-latest` 对应的环境核对和报告上传步骤。两步均通过后，从同一次 `verify` 运行的 `package-install-<运行器标签>-py<Python系列>` 产物中读取 `package-install.json`。每种包的文件名、安装版本和完整 SHA-256 都须有效，两个包都要通过策略体检和代理 `ping`。报告中的网关版本须与矩阵一致，两个解释器须匹配该作业的 Python 系列。
+
+Ubuntu 行分别列出发行版版本、Linux 内核版本和实测的 `linux-x86_64` 解释器平台。Windows 行列出系统内部版本和 `win-amd64`。生成器对 wheel 和源码包各自检查机器架构和 64 位指针宽度。早期 Ubuntu、Windows 作业仅跳过 macOS 专用步骤时，仍按原作业标签展示。已有适用的报告步骤时，缺失或错配的报告会使生成失败。
 
 组件列中随 wheel、sdist 显示的 12 个十六进制字符是各自报告的 SHA-256 前缀，可在作业产物中核对完整值。生成器核对安装报告中的记录，归档字节的校验由生产该报告的打包作业完成。应有的报告缺失、两种包只通过一种，或不同 Python 系列的报告被调换时，生成命令会报错。安装行的覆盖范围到核心包入口为止。
 
