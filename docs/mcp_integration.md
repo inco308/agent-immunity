@@ -42,6 +42,30 @@ Get-Content -LiteralPath $sessionFile.FullName | ForEach-Object { $_ | ConvertFr
 
 调用时写入失败，或下一行将超过单会话 **4 MiB** 文件预算时，客户端会收到 `-32603` 及“审计写入失败”的消息。代理关闭会话，该次调用不会派发。检查目录权限、可用空间和会话文件大小，再启动新会话。同步文件 I/O 可能阻塞代理，宿主负责日志轮转、保留期限及访问权限。审计文件不提供防篡改或掉电持久化保证。
 
+### 定位断线时需要核对的调用
+
+启用 `--audit-dir` 后，如果已入队的工具调用在会话结束时仍需核对，代理会尝试在同一目录创建 `<session_id>.unconfirmed.json`。其中 `decision_sequence` 指向同会话 JSONL 中的那一次 `ALLOW`，即使同一个工具已被调用多次也可以区分。提示文件只含版本、UTC 时间、会话 ID、判定序号和原因。
+
+| `reason` | 代理观察到的情况 |
+| --- | --- |
+| `upstream_result_unknown` | 请求已进入发送队列，代理关闭会话前仍未取得有效工具结果。工具可能已经完成写入。 |
+| `client_delivery_unconfirmed` | 代理已取得上游结果，但写出或刷新客户端响应时发生中断。 |
+
+以下 PowerShell 命令按会话和序号查找原始判定，输出排查需要的时间、工具编号和原因。请在该会话使用的策略中查找工具编号，再结合业务方已有的操作记录进行只读核对。若业务方没有保留对应关系，单凭脱敏标记无法还原是哪一笔订单或哪一个文件。
+
+```powershell
+Get-ChildItem artifacts/decision-audit -File -Filter '*.unconfirmed.json' | ForEach-Object {
+    $note = Get-Content -Raw -LiteralPath $_.FullName | ConvertFrom-Json
+    $journal = $_.FullName -replace '\.unconfirmed\.json$', '.jsonl'
+    $rows = @(Get-Content -LiteralPath $journal -ErrorAction Stop | ForEach-Object { $_ | ConvertFrom-Json } |
+        Where-Object { $_.session_id -ceq $note.session_id -and $_.sequence -eq $note.decision_sequence -and $_.decision_code -ceq 'ALLOW' })
+    if ($rows.Count -ne 1) { throw '无法唯一关联本会话的 ALLOW 判定，请检查日志保留情况' }
+    [pscustomobject]@{ utc=$rows[0].utc; session_id=$note.session_id; sequence=$rows[0].sequence; tool_index=$rows[0].tool_index; reason=$note.reason }
+}
+```
+
+排查时应将同会话的两个文件一同保留。每次写入 `ALLOW` 前为终止提示预留 256 字节，两份文件的内容合计仍受 4 MiB 限制。发布提示需要受信目录允许独占创建文件，POSIX 上还需要支持同目录硬链接。若发布失败，代理以固定的 stderr 诊断和非零状态退出。代理被强制终止、磁盘故障或客户端在管道写入成功后才失联时，都可能没有提示文件。是否已经执行、客户端是否已经读到响应，仍需核对业务事实。[断线演练](interop.md#客户端先断开的审计定位)
+
 ## 官方客户端互操作入口
 
 [互操作指南](interop.md)提供 MCP Inspector 2.14.0 的 `mcpdo` 持久连接客户端及官方 Python SDK 1.30.0 上游，包含可复制的配置、安装命令、完整文件/HTTP 业务链和端到端断言。它使用独立的 Python 3.12 测试环境与 Node 24.22.1；核心代理的标准库依赖范围不变。

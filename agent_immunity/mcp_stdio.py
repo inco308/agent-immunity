@@ -27,6 +27,8 @@ class StdioProxy:
         self.output = output_stream or sys.stdout.buffer
         self.engine = DynamicImmunityEngine(policy)
         self.audit = audit
+        # 只保留代理自己的判定行号和待核对原因，不复制客户端提供的标识或载荷。
+        self.unconfirmed = None
         self.messages = queue.Queue(maxsize=64)
         self.outgoing = queue.Queue(maxsize=64)
         self.process = None
@@ -36,7 +38,12 @@ class StdioProxy:
         self.exit_code = 0
 
     def emit(self, message):
-        self.output.write((canonical(message) + "\n").encode("utf-8"))
+        remaining = memoryview((canonical(message) + "\n").encode("utf-8"))
+        while remaining:
+            size = self.output.write(remaining)
+            if type(size) is not int or not 0 < size <= len(remaining):
+                raise OSError("客户端输出中断")
+            remaining = remaining[size:]
         self.output.flush()
 
     def send(self, message):
@@ -90,6 +97,18 @@ class StdioProxy:
                 pass
         except (OSError, ValueError):
             pass
+
+    def record_unconfirmed_on_close(self):
+        if self.unconfirmed is None:
+            return
+        try:
+            self.audit.record_unconfirmed(*self.unconfirmed)
+        except OSError:
+            self.exit_code = 1
+            try:
+                print("无法确认待核对标记已保存，请结合判定日志核对实际业务状态", file=sys.stderr)
+            except OSError:
+                pass  # 宿主也可能已关闭诊断管道。
 
     def fail(self, code, message, *, request_id=None):
         uncertain = False
@@ -180,7 +199,7 @@ class StdioProxy:
             decision = self.engine.begin(call)
             if self.audit is not None:
                 try:
-                    self.audit.record(name, decision.code)
+                    sequence = self.audit.record(name, decision.code)
                 except OSError:
                     # 判定尚未进入发送队列。审计失败即终止这次调用和会话。
                     self.fail(-32603, "审计写入失败，本次工具调用未转发，会话已关闭", request_id=call_id)
@@ -190,6 +209,8 @@ class StdioProxy:
                 self.emit({"jsonrpc": "2.0", "id": call_id, "result": result.output})
                 return
             self.dispatch({"jsonrpc": "2.0", "id": call_id, "method": method, "params": {"name": name, "arguments": decision.arguments}}, call)
+            if self.audit is not None and type(sequence) is int and hasattr(self.audit, "record_unconfirmed"):
+                self.unconfirmed = (sequence, "upstream_result_unknown")
         else:
             self.emit(error(call_id, -32601, "本代理仅支持 initialize、ping、tools/list 和 tools/call"))
 
@@ -250,8 +271,11 @@ class StdioProxy:
             if self.engine.closed:
                 self.running = False
                 self.exit_code = 1
+            if self.unconfirmed is not None:
+                self.unconfirmed = (self.unconfirmed[0], "client_delivery_unconfirmed")
         self.pending = None
         self.emit({"jsonrpc": "2.0", "id": pending["id"], "result": result})
+        self.unconfirmed = None
 
     def run(self):
         try:
@@ -297,19 +321,23 @@ class StdioProxy:
             self.exit_code = 1
         finally:
             self.engine.close()
-            if self.process:
-                if self.process.poll() is None:
-                    self.process.terminate()
-                    try:
-                        self.process.wait(timeout=2)
-                    except subprocess.TimeoutExpired:
-                        self.process.kill()
-                        self.process.wait(timeout=2)
-                for stream in (self.process.stdin, self.process.stdout, self.process.stderr):
-                    try:
-                        stream.close()
-                    except (OSError, ValueError):
-                        pass
+            try:
+                if self.process:
+                    if self.process.poll() is None:
+                        self.process.terminate()
+                        try:
+                            self.process.wait(timeout=2)
+                        except subprocess.TimeoutExpired:
+                            self.process.kill()
+                            self.process.wait(timeout=2)
+                    for stream in (self.process.stdin, self.process.stdout, self.process.stderr):
+                        try:
+                            stream.close()
+                        except (OSError, ValueError):
+                            pass
+            finally:
+                # 先回收直接上游，避免审计存储缓慢时工具仍在运行。
+                self.record_unconfirmed_on_close()
         return self.exit_code
 
 def main():

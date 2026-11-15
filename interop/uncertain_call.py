@@ -24,8 +24,8 @@ EXPECTED_DATA = {"agent_immunity": {"outcome": "unknown", "automatic_retry": Fal
 
 
 @asynccontextmanager
-async def connect(parameters):
-    async with stdio_client(parameters) as (reader, writer):
+async def connect(parameters, *, errlog=sys.stderr):
+    async with stdio_client(parameters, errlog=errlog) as (reader, writer):
         async with ClientSession(reader, writer, read_timeout_seconds=timedelta(seconds=20)) as session:
             initialized = await session.initialize()
             if initialized.protocolVersion != "2025-06-18":

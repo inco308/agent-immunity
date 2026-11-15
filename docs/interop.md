@@ -8,6 +8,10 @@
 
 在下文的 Python 3.12 互操作环境中运行 `python -X utf8 -m interop.uncertain_call`。该演练用锁定的 MCP Python SDK 客户端和上游，向临时记录追加一次业务操作，落盘后上游在回复前退出。客户端检查 JSON-RPC 错误中的结果未知标记，再通过全新的代理和 SDK 会话只读查询该操作。验收同时核对磁盘的追加次数，调查重连是否意外重复了原写入。结果保存于 `artifacts/interop/uncertain-call.json`。这个场景验证代理和本次客户端的行为，其他客户端主动再次提交仍可能造成第二次写入。
 
+## 客户端先断开的审计定位
+
+在同一 Python 3.12 互操作环境中运行 `python -X utf8 -m interop.client_disconnect_audit`。第一个客户端直接控制 stdio 管道，先查空流水，再调用追加工具。FastMCP 上游在追加记录并完成 `fsync` 后等待。客户端此时关闭两条管道，验收程序检查代理自行退出、直接上游已被回收，且唯一的脱敏提示关联本会话的第二条判定。随后新的 SDK 客户端只读核对同一操作，并逐字节比对重连前后的流水。Windows 和 Ubuntu CI 都保存 `client-disconnect-audit.json`。报告仅含版本、验证结果和计数。
+
 ## 固定的验证组合
 
 | 组件 | 版本与范围 |
