@@ -1,0 +1,4 @@
+# 两个 mcp-server-time 版本共用的时区依赖，仅接受这些 PyPI wheel 的 SHA-256。
+-r ../../interop/requirements.lock
+tzdata==2026.6 --hash=sha256:0a10eec6e13ef16b627fabed9a5f2ba61a62b1c67f327305f4e7e412a70b4aec
+tzlocal==5.4.5 --hash=sha256:ecab534f6d65d9deb4c4ea52c121ab6dd5958e9b878e71dcb102578269752454

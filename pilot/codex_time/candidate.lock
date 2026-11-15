@@ -1,0 +1,2 @@
+-r dependencies.lock
+mcp-server-time==2025.9.25 --hash=sha256:5cc559709887db33bf77546c2efb0a9352c13870cc2bfaeffab1a6bd6390419b
