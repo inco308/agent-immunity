@@ -12,6 +12,12 @@ INPUT = {"source_timezone": "UTC", "time": "09:00", "target_timezone": "Asia/Tok
 HOST_VERSION = "0.167.0-alpha.3.2"
 
 
+def configured_command(binary, project, *args):
+    """从本阶段活动文件读取一条 TOML 赋值，作为进程独立的 -c 参数。"""
+    setting = (project / ".codex/config.toml").read_text(encoding="utf-8").rstrip("\n")
+    return [str(binary), "-c", setting, *args]
+
+
 def rpc(child, seq, method, params):
     child.send({"id": seq, "method": method, "params": params})
     while True:
@@ -27,8 +33,8 @@ def rpc(child, seq, method, params):
 
 
 def host_stage(binary, project, expect_weekday):
-    child = _JsonProcess([str(binary), "--no-daemon", "app-server", "--listen", "stdio://"],
-                         project, 90)
+    command = configured_command(binary, project, "--no-daemon", "app-server", "--listen", "stdio://")
+    child = _JsonProcess(command, project, 90)
     try:
         rpc(child, 1, "initialize", {"clientInfo": {"name": "time_pilot", "version": "1"}})
         child.send({"method": "initialized", "params": {}})

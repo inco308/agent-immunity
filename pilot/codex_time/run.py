@@ -10,7 +10,7 @@ import sys
 import tempfile
 import time
 
-from .host import HOST_VERSION, SERVER_NAME, host_stage
+from .host import HOST_VERSION, SERVER_NAME, configured_command, host_stage
 
 REPO = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
@@ -43,19 +43,20 @@ def registration(gateway, policy, upstream):
 
 
 def config_bytes(target):
-    return (f"[mcp_servers.{SERVER_NAME}]\ncommand = {json.dumps(target['command'], ensure_ascii=False)}\n"
-            f"args = {json.dumps(target['args'], ensure_ascii=False)}\n").encode("utf-8")
+    command = json.dumps(target["command"], ensure_ascii=False)
+    args = json.dumps(target["args"], ensure_ascii=False)
+    return f"mcp_servers.{SERVER_NAME} = {{ command = {command}, args = {args} }}\n".encode("utf-8")
 
 
 def run_command(args, cwd):
     return subprocess.run(args, cwd=cwd, timeout=90, check=True, text=True, encoding="utf-8",
-                          stdout=subprocess.PIPE).stdout
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
 
 
-def register(binary, target, cwd):
-    """通过 Codex 自身的 CLI 激活所选版本，并回读宿主保存的配置。"""
-    run_command([binary, "mcp", "add", SERVER_NAME, "--", target["command"], *target["args"]], cwd)
-    saved = json.loads(run_command([binary, "mcp", "get", SERVER_NAME, "--json"], cwd))
+def verify_registration(binary, target, project):
+    """回读 Codex 本次进程解析出的命令和参数，再启动业务验收。"""
+    command = configured_command(binary, project, "mcp", "get", SERVER_NAME, "--json")
+    saved = json.loads(run_command(command, project))
     transport = saved.get("transport") or {}
     if (transport.get("command") != target["command"] or transport.get("args") != target["args"]
             or saved.get("enabled") is False):
@@ -111,8 +112,6 @@ def run(args):
 
     save()
     verified = None
-    temporary_registration = False
-    success = False
     try:
         probes = {slot: preflight(environment, slot, root, policy) for slot in VERSIONS}
         report["upstreams"] = probes
@@ -130,7 +129,6 @@ def run(args):
             existing = json.loads(run_command([executable, "mcp", "list", "--json"], root))
             if not isinstance(existing, list) or existing:
                 raise ValueError("一次性宿主演练需要空的 MCP 注册表")
-            temporary_registration = True
             original = registration(environment["gateway"], policy, environment["previous"])
             upgrade = registration(environment["gateway"], policy, environment["candidate"])
             if original == upgrade:
@@ -141,37 +139,41 @@ def run(args):
                 started = time.monotonic()
                 config = config_bytes(target)
                 atomic_write(active, config)
-                register(executable, target, root)
+                verify_registration(executable, target, project)
                 result = host_stage(executable, project, expect_weekday=slot == "candidate")
                 if active.read_bytes() != config:
                     raise RuntimeError("宿主配置在演练过程中被改变")
-                verified = config
                 report["stages"].append({"phase": phase, "version": VERSIONS[slot], "config_sha256": digest(config),
                                          "elapsed_seconds": round(time.monotonic() - started, 3), **result})
-                save()
+                try:
+                    save()
+                except BaseException:
+                    report["stages"].pop()
+                    raise
+                verified = config
         report["status"] = "passed"
-        success = True
-    except (ValueError, KeyError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
-        report["status"] = "failed"
-        # 失败时只恢复本次新建项目内已验收的配置。既有部署不受试点脚本影响。
-        if verified is not None:
-            atomic_write(active, verified)
-            report["restored_verified_config_sha256"] = digest(verified)
-        elif active.exists():
-            active.unlink()
-        report["failure_type"] = type(exc).__name__
-        print(str(exc) if isinstance(exc, (ValueError, RuntimeError)) else type(exc).__name__, file=sys.stderr)
-    finally:
-        if temporary_registration:
-            try:
-                run_command([executable, "mcp", "remove", SERVER_NAME], root)
-            except (OSError, RuntimeError, subprocess.SubprocessError):
-                success = False
-                report["status"] = "failed"
-                report["cleanup_error"] = "临时 MCP 注册清理失败"
         save()
-        print(f"{report['status']}  {report_path}")
-    return 0 if success else 1
+    except (Exception, KeyboardInterrupt, SystemExit) as exc:
+        report["status"] = "failed"
+        report["failure_type"] = type(exc).__name__
+        try:
+            if verified is None:
+                active.unlink(missing_ok=True)
+            else:
+                atomic_write(active, verified)
+                report["restored_verified_config_sha256"] = digest(verified)
+        except Exception as rollback_error:
+            report["rollback_error_type"] = type(rollback_error).__name__
+        try:
+            save()
+        except Exception as save_error:
+            print(f"无法保存失败报告（{type(save_error).__name__}）", file=sys.stderr)
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            raise
+        print(f"演练失败（{report['failure_type']}）  {report_path}", file=sys.stderr)
+        return 1
+    print(f"{report['status']}  {report_path}")
+    return 0
 
 
 if __name__ == "__main__":
