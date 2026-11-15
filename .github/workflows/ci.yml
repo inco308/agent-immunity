@@ -65,6 +65,8 @@ jobs:
         run: python -X utf8 interop/run_e2e.py
       - name: SDK 写入后断线与只读重连验收
         run: python -X utf8 -m interop.uncertain_call
+      - name: 客户端断线后的脱敏审计定位与只读核对
+        run: python -X utf8 -m interop.client_disconnect_audit
       - name: 上游目录采集与预部署检查
         shell: pwsh
         run: |
@@ -85,4 +87,5 @@ jobs:
             artifacts/interop/report.json
             artifacts/interop/status-report.md
             artifacts/interop/uncertain-call.json
+            artifacts/interop/client-disconnect-audit.json
           if-no-files-found: warn
