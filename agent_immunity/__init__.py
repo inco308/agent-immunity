@@ -3,5 +3,5 @@ from .core.models import ToolCall, ToolResult, Decision, TaintTag
 from .core.policy import Policy, PolicyError
 from .core.immunity_engine import DynamicImmunityEngine
 
-__version__ = "0.3.0a1"
+__version__ = "0.3.0a2"
 __all__ = ["Policy", "PolicyError", "ToolCall", "ToolResult", "Decision", "TaintTag", "DynamicImmunityEngine"]
