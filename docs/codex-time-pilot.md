@@ -40,3 +40,17 @@ Windows 的 `--codex` 可指向相同版本的 `codex.exe`。每次演练使用�
 在自己的受信项目里，先确认演练配置中的绝对路径与本机安装一致。若项目尚无 `time_pilot` 登记，将演练生成的 `mcp_servers.time_pilot` 赋值放到项目 `.codex/config.toml` 文件开头、首个 TOML 表头之前。若项目已有同名登记，先保存原配置，再更新该项的 `command` 和 `args`。打开工作区，在 Codex 的 MCP 工具列表确认 `time_pilot.convert_time` 可用，用同一时区转换例子验证返回值。升级后重新连接，回退时恢复旧配置和上一版本的已验证虚拟环境。[Codex MCP 配置说明](https://developers.openai.com/codex/mcp/)
 
 自动验收从宿主的线程级 MCP 接口发起调用，覆盖发现、实际工具连接和策略拒绝。它没有运行模型规划或验证每种 IDE 图形界面，也没有收集外部团队的采用数据。项目的下一阶段需要独立使用者实际走完上述安装和升级流程。
+
+## 在 Apple Silicon 上复现宿主演练
+
+在专用测试账号或干净的 macOS 运行器上，使用原生 arm64 CPython 3.12 和 Node 24.22.1，先按“从干净环境复现”完成 wheel 构建、Python 环境准备和 `npm ci`。然后从仓库根目录运行：
+
+```bash
+python -X utf8 -m pilot.codex_time.run --require-macos-arm64 \
+  --codex pilot/codex_time/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex \
+  --environment artifacts/pilot-env/environment.json --output-dir artifacts/apple-silicon-time-run
+```
+
+上述路径指向锁定 npm 包中的原生程序。运行器用 `lipo -archs` 核对该文件只含 arm64，并将同一可执行文件用于三个阶段。网关以及新旧上游的解释器会分别报告自身架构与 Python 补丁版本。这个模式要求完整宿主调用，单独的 `--preflight-only` 仍可用于常规策略体检。
+
+在 `codex-time-pilot` 工作流中选择 `lifecycle-macos-arm64` 作业，下载 `codex-time-lifecycle-macos-arm64` 产物。查看 `report.json` 的 `host_environment`、`codex_version` 和 `stages`，将原生架构与三阶段的工具发现、时区结果、策略拒绝及配置摘要放在一起核对。Ubuntu 作业继续提供其原有的独立报告。

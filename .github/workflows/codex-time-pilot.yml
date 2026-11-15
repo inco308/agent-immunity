@@ -8,6 +8,55 @@ permissions:
   contents: read
 
 jobs:
+  lifecycle-macos-arm64:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: "24.22.1"
+      - name: 安装锁定的 Codex CLI、网关和两个第三方版本
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --prefix pilot/codex_time --ignore-scripts --no-audit --no-fund
+          python -m pip wheel --no-deps --wheel-dir artifacts/pilot-wheels .
+          python -X utf8 pilot/codex_time/prepare.py --root artifacts/pilot-env --wheel artifacts/pilot-wheels/*.whl
+      - name: Codex 宿主安装、升级和回退
+        run: >-
+          python -X utf8 -m pilot.codex_time.run --require-macos-arm64
+          --codex pilot/codex_time/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex
+          --environment artifacts/pilot-env/environment.json
+          --output-dir artifacts/codex-time-lifecycle
+      - name: 核对 macOS 15 原生宿主的三阶段证据
+        shell: pwsh
+        run: |
+          $r = Get-Content -Raw artifacts/codex-time-lifecycle/report.json | ConvertFrom-Json
+          $envInfo = $r.host_environment
+          if ($r.status -cne 'passed' -or $r.scope -cne 'CODEX_MCP_LIFECYCLE' -or
+              ($r.stages.phase -join ',') -cne 'install,upgrade,rollback' -or
+              $envInfo.system -cne 'Darwin' -or $envInfo.os_version -notlike '15.*' -or $envInfo.codex_arch -cne 'arm64') {
+            throw '需要 macOS 15 上原生 arm64 Codex 宿主完整通过安装、升级和回退'
+          }
+          foreach ($role in 'gateway','previous','candidate') {
+            $python = $envInfo.pythons.$role
+            if ($python.implementation -cne 'CPython' -or $python.version -notlike '3.12.*' -or $python.machine -cne 'arm64') {
+              throw "试点环境 $role 缺少原生 arm64 CPython 3.12 的观测记录"
+            }
+          }
+      - name: 保存 Apple Silicon 三阶段报告
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: codex-time-lifecycle-macos-arm64
+          path: artifacts/codex-time-lifecycle/report.json
+          if-no-files-found: warn
   lifecycle:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
