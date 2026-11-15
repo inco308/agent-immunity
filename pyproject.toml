@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-immunity"
-version = "0.3.0a2"
+version = "0.3.0a3"
 description = "Experimental explicit-policy checker and MCP stdio tool proxy"
 readme = "README.md"
 license = { text = "Apache-2.0" }

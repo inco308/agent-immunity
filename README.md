@@ -1,6 +1,6 @@
 # Agent Immunity
 
-Agent Immunity 为本地 MCP stdio 工具提供显式策略检查。维护者可以限制工具、参数、文件目录和网络目标，并在 CI 中核对上游升级后的接口。当前 0.3.0a2 是面向开发者试点的预览版。[产品路线图](docs/product-roadmap.md)
+Agent Immunity 为本地 MCP stdio 工具提供显式策略检查。维护者可以限制工具、参数、文件目录和网络目标，并在 CI 中核对上游升级后的接口。当前 0.3.0a3 是面向开发者试点的预览版。[产品路线图](docs/product-roadmap.md)
 
 核心运行时使用 Python 3.10+ 标准库，采用 [Apache-2.0 许可证](LICENSE)。独立客户端互操作验证另有锁定的 Node、Python SDK 测试依赖。0.2 改变了 0.1 的 API 和功能边界，已有调用方请先阅读[迁移说明](docs/migration_0_2.md)。
 

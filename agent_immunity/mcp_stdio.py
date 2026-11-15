@@ -8,6 +8,7 @@ import threading
 import time
 from . import DynamicImmunityEngine, Policy, ToolCall, ToolResult, __version__
 from .core.policy import canonical, strict_json
+from .client_output import ClientOutput, OutputUnavailable
 
 VERSION = "2025-06-18"
 
@@ -18,13 +19,17 @@ def error(call_id, code, message):
     return {"jsonrpc": "2.0", "id": call_id, "error": {"code": code, "message": message}}
 
 class StdioProxy:
-    def __init__(self, policy, command, timeout=30, input_stream=None, output_stream=None, *, audit=None):
+    def __init__(self, policy, command, timeout=30, input_stream=None, output_stream=None, *, audit=None, output_timeout=5):
         self.policy = policy
         self.command = command
         self.timeout = timeout
         # 后台线程可能仍等待客户端输入；避免解释器退出时争抢缓冲读取锁。
         self.input = input_stream or sys.stdin.buffer.raw
-        self.output = output_stream or sys.stdout.buffer
+        if not 0 < output_timeout <= 300:
+            raise ValueError("output_timeout 必须大于 0 且不超过 300 秒")
+        self.output = output_stream
+        self.output_timeout = output_timeout
+        self.client_output = None
         self.engine = DynamicImmunityEngine(policy)
         self.audit = audit
         self.messages = queue.Queue(maxsize=64)
@@ -36,8 +41,14 @@ class StdioProxy:
         self.exit_code = 0
 
     def emit(self, message):
-        self.output.write((canonical(message) + "\n").encode("utf-8"))
-        self.output.flush()
+        frame = (canonical(message) + "\n").encode("utf-8")
+        if self.client_output is not None:
+            self.client_output.send(frame)
+        else:
+            # 单独调用协议处理方法时，使用调用方提供的同步流。
+            stream = self.output if self.output is not None else sys.stdout.buffer
+            stream.write(frame)
+            stream.flush()
 
     def send(self, message):
         encoded = (canonical(message) + "\n").encode("utf-8")
@@ -246,6 +257,7 @@ class StdioProxy:
 
     def run(self):
         try:
+            self.client_output = ClientOutput(self.output, self.output_timeout)
             self.process = subprocess.Popen(self.command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=self.policy.workspace, shell=False, bufsize=0, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             for source, stream in (("client", self.input), ("upstream", self.process.stdout)):
                 threading.Thread(target=self.reader, args=(source, stream), daemon=True).start()
@@ -283,10 +295,17 @@ class StdioProxy:
                         self.upstream_message(message)
                 except (ValueError, TypeError, KeyError, RecursionError, OSError):
                     self.fail(-32603, "协议或上游通信错误，会话已关闭")
-        except (OSError, BrokenPipeError):
+        except OutputUnavailable:
+            # 输出失败后不再往客户端写错误帧，直接进入上游回收流程。
+            self.running = False
+            self.exit_code = 1
+            self.pending = None
+        except OSError:
             print("无法启动或维持上游进程通信", file=sys.stderr)
             self.exit_code = 1
         finally:
+            if self.client_output is not None:
+                self.client_output.close()
             self.engine.close()
             if self.process:
                 if self.process.poll() is None:
@@ -307,18 +326,19 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--policy", required=True, help="受信本地 JSON 策略")
     parser.add_argument("--timeout", type=float, default=30, help="每次上游请求超时秒数")
+    parser.add_argument("--output-timeout", type=float, default=5, help="等待每个客户端输出帧写入并刷新完成的秒数（默认 5）")
     parser.add_argument("--audit-dir", help="在既有受信目录按会话保存脱敏的工具调用判定")
     parser.add_argument("upstream", nargs=argparse.REMAINDER, help="-- 之后指定受信上游命令")
     args = parser.parse_args()
     command = args.upstream[1:] if args.upstream[:1] == ["--"] else args.upstream
-    if not command or not 0 < args.timeout <= 300:
-        parser.error("需要上游命令，timeout 必须介于 0 和 300 秒")
+    if not command or not 0 < args.timeout <= 300 or not 0 < args.output_timeout <= 300:
+        parser.error("需要上游命令，两个超时须大于 0 且不超过 300 秒")
     try:
         policy = Policy.load(args.policy)
     except (OSError, ValueError, TypeError, RecursionError):
         parser.error("无法加载有效的本地策略")
     if args.audit_dir is None:
-        return StdioProxy(policy, command, args.timeout).run()
+        return StdioProxy(policy, command, args.timeout, output_timeout=args.output_timeout).run()
     from .decision_audit import AuditError, DecisionAudit
 
     try:
@@ -328,7 +348,7 @@ def main():
         return 1
     try:
         with closing(audit):
-            return StdioProxy(policy, command, args.timeout, audit=audit).run()
+            return StdioProxy(policy, command, args.timeout, audit=audit, output_timeout=args.output_timeout).run()
     except AuditError:
         print("审计文件关闭失败，请核查记录", file=sys.stderr)
         return 1
