@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "workspace": "workspace",
+  "tools": {
+    "convert_time": {
+      "capabilities": ["compute"],
+      "parameters": {"source_timezone": "string", "time": "string", "target_timezone": "string"},
+      "state": "converted"
+    }
+  },
+  "transitions": {"START": ["converted"]}
+}

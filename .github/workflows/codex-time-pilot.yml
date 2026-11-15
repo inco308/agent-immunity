@@ -1,0 +1,44 @@
+name: codex-time-pilot
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+
+jobs:
+  lifecycle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: "24.22.1"
+      - name: 安装锁定的 Codex CLI
+        run: npm ci --prefix pilot/codex_time --ignore-scripts --no-audit --no-fund
+      - name: 从本提交构建网关并准备两个第三方版本
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip wheel --no-deps --wheel-dir artifacts/pilot-wheels .
+          python -X utf8 pilot/codex_time/prepare.py --root artifacts/pilot-env --wheel artifacts/pilot-wheels/*.whl
+      - name: Codex 宿主安装、升级和回退
+        run: >-
+          python -X utf8 -m pilot.codex_time.run
+          --codex pilot/codex_time/node_modules/.bin/codex
+          --environment artifacts/pilot-env/environment.json
+          --output-dir artifacts/codex-time-lifecycle
+      - name: 保存阶段证据
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: codex-time-lifecycle
+          path: artifacts/codex-time-lifecycle/report.json
+          if-no-files-found: warn

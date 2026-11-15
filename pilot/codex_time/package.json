@@ -1,0 +1,6 @@
+{
+  "name": "agent-immunity-codex-time-pilot",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {"@openai/codex": "0.167.0-alpha.3.2"}
+}
