@@ -8,8 +8,19 @@ permissions:
   contents: read
 
 jobs:
-  lifecycle-macos-arm64:
-    runs-on: macos-15
+  native-lifecycle:
+    name: lifecycle-${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: macos-arm64
+            os: macos-15
+            binary: codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex
+          - target: windows-x64
+            os: windows-2025
+            binary: codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin/codex.exe
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -22,39 +33,50 @@ jobs:
         with:
           node-version: "24.22.1"
       - name: 安装锁定的 Codex CLI、网关和两个第三方版本
-        shell: bash
+        shell: pwsh
         run: |
-          set -euo pipefail
-          npm ci --prefix pilot/codex_time --ignore-scripts --no-audit --no-fund
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $npm = if ($IsWindows) { 'npm.cmd' } else { 'npm' }
+          & $npm ci --prefix pilot/codex_time --ignore-scripts --no-audit --no-fund
           python -m pip wheel --no-deps --wheel-dir artifacts/pilot-wheels .
-          python -X utf8 pilot/codex_time/prepare.py --root artifacts/pilot-env --wheel artifacts/pilot-wheels/*.whl
+          $wheel = @(Get-ChildItem -File artifacts/pilot-wheels -Filter 'agent_immunity-*.whl')
+          if ($wheel.Count -ne 1) { throw '试点需要本次构建的唯一网关 wheel' }
+          python -X utf8 pilot/codex_time/prepare.py --root artifacts/pilot-env --wheel $wheel[0].FullName
       - name: Codex 宿主安装、升级和回退
         run: >-
-          python -X utf8 -m pilot.codex_time.run --require-macos-arm64
-          --codex pilot/codex_time/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex
+          python -X utf8 -m pilot.codex_time.run --require-${{ matrix.target }}
+          --codex pilot/codex_time/node_modules/@openai/${{ matrix.binary }}
           --environment artifacts/pilot-env/environment.json
           --output-dir artifacts/codex-time-lifecycle
-      - name: 核对 macOS 15 原生宿主的三阶段证据
+      - name: 核对原生宿主的三阶段证据
         shell: pwsh
         run: |
           $r = Get-Content -Raw artifacts/codex-time-lifecycle/report.json | ConvertFrom-Json
           $envInfo = $r.host_environment
+          $hostMatches = if ($IsWindows) {
+            $envInfo.system -ceq 'Windows' -and $envInfo.os_version -like '10.0.*' -and $envInfo.codex_arch -ceq 'x64'
+          } else {
+            $envInfo.system -ceq 'Darwin' -and $envInfo.os_version -like '15.*' -and $envInfo.codex_arch -ceq 'arm64'
+          }
           if ($r.status -cne 'passed' -or $r.scope -cne 'CODEX_MCP_LIFECYCLE' -or
-              ($r.stages.phase -join ',') -cne 'install,upgrade,rollback' -or
-              $envInfo.system -cne 'Darwin' -or $envInfo.os_version -notlike '15.*' -or $envInfo.codex_arch -cne 'arm64') {
-            throw '需要 macOS 15 上原生 arm64 Codex 宿主完整通过安装、升级和回退'
+              ($r.stages.phase -join ',') -cne 'install,upgrade,rollback' -or !$hostMatches) {
+            throw '需要对应平台的原生宿主完整通过安装、升级和回退'
           }
           foreach ($role in 'gateway','previous','candidate') {
             $python = $envInfo.pythons.$role
-            if ($python.implementation -cne 'CPython' -or $python.version -notlike '3.12.*' -or $python.machine -cne 'arm64') {
-              throw "试点环境 $role 缺少原生 arm64 CPython 3.12 的观测记录"
+            $archMatches = if ($IsWindows) {
+              $python.machine -ceq 'AMD64' -and $python.python_platform -ceq 'win-amd64'
+            } else { $python.machine -ceq 'arm64' }
+            if ($python.implementation -cne 'CPython' -or $python.version -notlike '3.12.*' -or !$archMatches) {
+              throw "试点环境 $role 缺少对应原生 CPython 3.12 的观测记录"
             }
           }
-      - name: 保存 Apple Silicon 三阶段报告
+      - name: 保存原生宿主三阶段报告
         if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: codex-time-lifecycle-macos-arm64
+          name: codex-time-lifecycle-${{ matrix.target }}
           path: artifacts/codex-time-lifecycle/report.json
           if-no-files-found: warn
   lifecycle:
