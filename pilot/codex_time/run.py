@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -91,6 +92,53 @@ def validate_clean_account():
         raise ValueError("自动宿主演练需要单独的测试账号或干净的 CI runner；当前账号已配置 Codex")
 
 
+def verified_slots(environment, required):
+    """旧描述文件沿用本地构建模式，双收据模式需要两套相互独立的来源。"""
+    schema = environment.get("schema_version")
+    if type(schema) is not int:
+        raise ValueError("环境描述版本无效")
+    if schema == 1 and "gateway_slots" not in environment and not required:
+        return None
+    slots = environment.get("gateway_slots")
+    if (schema != 2 or environment.get("scope") != "CODEX_TIME_PILOT_ENVIRONMENT"
+            or not isinstance(slots, dict) or set(slots) != set(VERSIONS)):
+        raise ValueError("需要经过双预览包准备流程生成的环境描述")
+    for entry in slots.values():
+        if (not isinstance(entry, dict) or not isinstance(entry.get("version"), str) or not entry["version"]
+                or not all(isinstance(entry.get(key), str) and Path(entry[key]).is_absolute()
+                           for key in ("python", "wheel"))
+                or not all(type(entry.get(key)) is int and entry[key] > 0 for key in ("run_id", "artifact_id"))
+                or not isinstance(entry.get("commit"), str) or not re.fullmatch(r"[0-9a-f]{40}", entry["commit"])
+                or not isinstance(entry.get("wheel_sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", entry["wheel_sha256"])):
+            raise ValueError("环境描述缺少网关来源或绝对安装路径")
+    for field in ("python", "wheel_sha256", "commit", "run_id", "artifact_id"):
+        if slots["previous"][field] == slots["candidate"][field]:
+            raise ValueError("必须使用两个独立构建的网关")
+    return slots
+
+
+def gateway_identity(entry, root):
+    """用即将注册给宿主的解释器，对照核验时保存的 wheel 检查已安装内容。"""
+    wheel = Path(entry["wheel"])
+    receipt = json.loads(wheel.with_name("receipt.json").read_bytes())
+    fields = ("version", "commit", "run_id", "artifact_id")
+    if (not isinstance(receipt, dict)
+            or not all(type(receipt.get(k)) is type(entry[k]) and receipt[k] == entry[k] for k in fields)
+            or not isinstance(receipt.get("files"), dict) or receipt["files"].get(wheel.name) != entry["wheel_sha256"]):
+        raise ValueError("下载时保存的查验收据与本阶段选择的构建不一致")
+    output = run_command([entry["python"], "-I", "-X", "utf8", str(HERE / "wheel_identity.py"),
+                          "--wheel", entry["wheel"], "--version", entry["version"],
+                          "--sha256", entry["wheel_sha256"]], root)
+    observed = json.loads(output)
+    if (not isinstance(observed, dict) or observed.get("wheel_sha256") != entry["wheel_sha256"]
+            or observed.get("version") != entry["version"] or type(observed.get("runtime_files")) is not int
+            or observed["runtime_files"] < 1 or not isinstance(observed.get("metadata_sha256"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", observed["metadata_sha256"])):
+        raise ValueError("安装树核验结果与选定的网关收据不一致")
+    return {**{key: entry[key] for key in ("commit", "run_id", "artifact_id")},
+            **{key: observed[key] for key in ("version", "wheel_sha256", "metadata_sha256", "runtime_files")}}
+
+
 def run(args):
     environment = json.loads(args.environment.resolve(strict=True).read_bytes())
     root = args.output_dir.resolve()
@@ -102,9 +150,7 @@ def run(args):
     (project / ".codex").mkdir(parents=True)
     active = project / ".codex/config.toml"
     report = {"schema_version": 1, "scope": "preflight" if args.preflight_only else "CODEX_MCP_LIFECYCLE",
-              "status": "running", "policy_sha256": digest(policy.read_bytes()),
-              "gateway_version": environment["versions"]["gateway"], "mcp_sdk": environment["versions"]["mcp"],
-              "gateway_wheel_sha256": environment["gateway_wheel_sha256"], "stages": []}
+              "status": "running", "policy_sha256": digest(policy.read_bytes()), "stages": []}
     report_path = root / "report.json"
 
     def save():
@@ -113,8 +159,23 @@ def run(args):
     save()
     verified = None
     try:
-        probes = {slot: preflight(environment, slot, root, policy) for slot in VERSIONS}
-        report["upstreams"] = probes
+        slots = verified_slots(environment, getattr(args, "require_verified_gateways", False))
+        report["mcp_sdk"] = environment["versions"]["mcp"]
+        if slots:
+            report.update(schema_version=2, gateway_mode="verified_previews")
+        else:
+            report.update(gateway_version=environment["versions"]["gateway"],
+                          gateway_wheel_sha256=environment["gateway_wheel_sha256"])
+        report["upstreams"] = {}
+        targets = {}
+        for slot in VERSIONS:
+            gateway = slots[slot]["python"] if slots else environment["gateway"]
+            identity = gateway_identity(slots[slot], root) if slots else None
+            probe = preflight({**environment, "gateway": gateway}, slot, root, policy)
+            if identity:
+                probe["gateway"] = identity
+            report["upstreams"][slot] = probe
+            targets[slot] = registration(gateway, policy, environment[slot])
         if not args.preflight_only:
             validate_clean_account()
             executable = shutil.which(args.codex)
@@ -129,20 +190,23 @@ def run(args):
             existing = json.loads(run_command([executable, "mcp", "list", "--json"], root))
             if not isinstance(existing, list) or existing:
                 raise ValueError("一次性宿主演练需要空的 MCP 注册表")
-            original = registration(environment["gateway"], policy, environment["previous"])
-            upgrade = registration(environment["gateway"], policy, environment["candidate"])
-            if original == upgrade:
+            if targets["previous"] == targets["candidate"]:
                 raise ValueError("前后版本必须安装在不同环境")
-            for phase, slot, target in (("install", "previous", original), ("upgrade", "candidate", upgrade),
-                                        ("rollback", "previous", original)):
+            for phase, slot in (("install", "previous"), ("upgrade", "candidate"), ("rollback", "previous")):
                 report["attempted_phase"] = phase
                 started = time.monotonic()
+                target = targets[slot]
+                identity = gateway_identity(slots[slot], root) if slots else None
                 config = config_bytes(target)
                 atomic_write(active, config)
                 verify_registration(executable, target, project)
                 result = host_stage(executable, project, expect_weekday=slot == "candidate")
                 if active.read_bytes() != config:
                     raise RuntimeError("宿主配置在演练过程中被改变")
+                if slots:
+                    if gateway_identity(slots[slot], root) != identity:
+                        raise ValueError("宿主调用前后的网关安装证据不一致")
+                    result = {**result, "gateway": identity}
                 report["stages"].append({"phase": phase, "version": VERSIONS[slot], "config_sha256": digest(config),
                                          "elapsed_seconds": round(time.monotonic() - started, 3), **result})
                 try:
@@ -182,4 +246,5 @@ if __name__ == "__main__":
     parser.add_argument("--output-dir", type=Path, required=True, help="本次新建的演练目录")
     parser.add_argument("--codex", default="codex")
     parser.add_argument("--preflight-only", action="store_true", help="仅验收第三方目录与安装后的策略检查器")
+    parser.add_argument("--require-verified-gateways", action="store_true", help="只接受两个已核验预览构建的环境描述")
     raise SystemExit(run(parser.parse_args()))

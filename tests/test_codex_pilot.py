@@ -38,6 +38,7 @@ class CodexPilotLifecycleTests(unittest.TestCase):
         self.args = SimpleNamespace(environment=env_file, output_dir=self.output,
                                     codex="pilot-test-codex", preflight_only=False)
         self.observations = []
+        self.identity_checks = []
         self.failure = None
         self.readbacks = []
         self.account_writes = []
@@ -56,11 +57,29 @@ class CodexPilotLifecycleTests(unittest.TestCase):
 
     def mock_preflight(self, environment, slot, output, policy):
         self.assertEqual(environment[slot], self.environment[slot])
+        if "gateway_slots" in self.environment:
+            self.assertEqual(environment["gateway"], self.environment["gateway_slots"][slot]["python"])
         self.assertEqual((output, policy), (self.output, self.policy_path))
         return {"installed_version": pilot.VERSIONS[slot], "raw_tools": ["convert_time", "get_current_time"],
                 "policy_check": "pass", "catalog_sha256": checksum(slot.encode())}
 
     def mock_command(self, argv, cwd):
+        if len(argv) > 4 and Path(argv[4]).name == "wheel_identity.py":
+            slots = self.environment["gateway_slots"]
+            slot = next(name for name, entry in slots.items() if entry["python"] == argv[0])
+            entry = slots[slot]
+            self.assertEqual(cwd, self.output)
+            self.assertEqual(argv[1:], ["-I", "-X", "utf8", str(pilot.HERE / "wheel_identity.py"),
+                                        "--wheel", entry["wheel"], "--version", entry["version"],
+                                        "--sha256", entry["wheel_sha256"]])
+            self.identity_checks.append((slot, len(self.observations)))
+            metadata = checksum(f"{slot} metadata".encode())
+            if slot == "candidate" and len(self.observations) == 1 and self.failure == "candidate_identity":
+                raise ValueError("候选网关安装核验失败")
+            if slot == "candidate" and len(self.observations) == 2 and self.failure == "metadata_changed":
+                metadata = checksum(b"modified after call")
+            return json.dumps({"version": entry["version"], "wheel_sha256": entry["wheel_sha256"],
+                               "runtime_files": 8, "metadata_sha256": metadata})
         if argv[1:] == ["--version"]:
             return f"codex-cli {pilot.HOST_VERSION}\n"
         if argv == ["git", "init", "--quiet"]:
@@ -104,7 +123,12 @@ class CodexPilotLifecycleTests(unittest.TestCase):
                                    "--no-daemon", "app-server", "--listen", "stdio://"])
         slot, other = ("candidate", "previous") if expect_weekday else ("previous", "candidate")
         # 在每次宿主验收时读取活动文件，核对它指向本次策略和正确的上游。
-        for value in (self.environment["gateway"], self.environment[slot], str(self.policy_path)):
+        gateway = self.environment["gateway"]
+        if "gateway_slots" in self.environment:
+            gateway = self.environment["gateway_slots"][slot]["python"]
+            other_gateway = self.environment["gateway_slots"][other]["python"]
+            self.assertNotIn(json.dumps(other_gateway, ensure_ascii=False).encode("utf-8"), config)
+        for value in (gateway, self.environment[slot], str(self.policy_path)):
             self.assertIn(json.dumps(value, ensure_ascii=False).encode("utf-8"), config)
         self.assertNotIn(json.dumps(self.environment[other], ensure_ascii=False).encode("utf-8"), config)
         self.observations.append((slot, config, checksum(self.policy_path.read_bytes())))
@@ -115,7 +139,7 @@ class CodexPilotLifecycleTests(unittest.TestCase):
                 raise TypeError("候选宿主响应形状异常")
             if self.failure == "not_mapping":
                 return []
-        return {"weekday_field": expect_weekday}
+        return {"weekday_field": expect_weekday, "denial": "TRANSITION_DENIED"}
 
     def run_trial(self):
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
@@ -123,6 +147,98 @@ class CodexPilotLifecycleTests(unittest.TestCase):
 
     def read_report(self):
         return json.loads(self.report_path.read_text(encoding="utf-8"))
+
+    def enable_verified_previews(self):
+        root = self.args.environment.parent
+        slots = {}
+        for index, name in enumerate(("previous", "candidate"), start=1):
+            slots[name] = {
+                "version": "0.3.0a1", "python": str(root / f"gateway-{name}-python"),
+                "wheel": str(root / name / "agent_immunity-0.3.0a1-py3-none-any.whl"),
+                "run_id": index, "artifact_id": index + 10, "commit": str(index) * 40,
+                "wheel_sha256": checksum(f"{name} wheel".encode()),
+            }
+            slot = slots[name]
+            wheel = Path(slot["wheel"])
+            wheel.parent.mkdir()
+            receipt = {key: slot[key] for key in ("version", "commit", "run_id", "artifact_id")}
+            receipt["files"] = {wheel.name: slot["wheel_sha256"]}
+            (wheel.parent / "receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+        self.environment.update(schema_version=2, gateway_slots=slots, gateway=slots["previous"]["python"],
+                                gateway_wheel_sha256=slots["previous"]["wheel_sha256"])
+        self.args.environment.write_text(json.dumps(self.environment), encoding="utf-8")
+        self.args.require_verified_gateways = True
+        return slots
+
+    def test_two_same_version_builds_follow_host_and_upstream_through_rollback(self):
+        slots = self.enable_verified_previews()
+        self.assertEqual(self.run_trial(), 0)
+        report = self.read_report()
+        self.assertEqual(report["gateway_mode"], "verified_previews")
+        self.assertEqual(report["status"], "passed")
+        stages = report["stages"]
+        self.assertEqual([item["phase"] for item in stages], ["install", "upgrade", "rollback"])
+        for item, slot in zip(stages, ("previous", "candidate", "previous")):
+            original = slots[slot]
+            self.assertEqual(item["gateway"], {
+                **{key: original[key] for key in ("commit", "artifact_id", "run_id", "version", "wheel_sha256")},
+                "metadata_sha256": checksum(f"{slot} metadata".encode()), "runtime_files": 8,
+            })
+            self.assertEqual(item["version"], pilot.VERSIONS[slot])
+            self.assertEqual(item["weekday_field"], slot == "candidate")
+            self.assertEqual(item["denial"], "TRANSITION_DENIED")
+        self.assertEqual(self.identity_checks, [
+            ("previous", 0), ("candidate", 0),  # 预检两个环境
+            ("previous", 0), ("previous", 1), ("candidate", 1), ("candidate", 2),
+            ("previous", 2), ("previous", 3),  # 每次调用前后均按活动解释器核验
+        ])
+        self.assertEqual(self.active.read_bytes(), self.observations[0][1])
+
+    def test_failed_candidate_identity_preserves_previous_registration_before_switch(self):
+        self.enable_verified_previews()
+        self.failure = "candidate_identity"
+        self.assertEqual(self.run_trial(), 1)
+        report = self.read_report()
+        self.assertEqual(report["attempted_phase"], "upgrade")
+        self.assertEqual([stage["phase"] for stage in report["stages"]], ["install"])
+        self.assertEqual([slot for slot, _, _ in self.observations], ["previous"])
+        self.assertEqual(len(self.readbacks), 1)
+        self.assertEqual(self.active.read_bytes(), self.observations[0][1])
+        self.assertEqual(report["restored_verified_config_sha256"], report["stages"][0]["config_sha256"])
+
+    def test_changed_candidate_identity_after_host_call_restores_previous_config(self):
+        self.enable_verified_previews()
+        self.check_candidate_failure("metadata_changed")
+
+    def test_required_verified_mode_rejects_legacy_descriptor(self):
+        self.args.require_verified_gateways = True
+        self.assertEqual(self.run_trial(), 1)
+        self.assertEqual(self.read_report()["stages"], [])
+        self.preflight.assert_not_called()
+        self.host.assert_not_called()
+        self.assertFalse(self.active.exists())
+
+    def test_missing_candidate_slot_cannot_fall_back_to_legacy_gateway(self):
+        slots = self.enable_verified_previews()
+        del slots["candidate"]
+        self.args.require_verified_gateways = False
+        self.args.environment.write_text(json.dumps(self.environment), encoding="utf-8")
+        self.assertEqual(self.run_trial(), 1)
+        self.assertEqual(self.read_report()["stages"], [])
+        self.preflight.assert_not_called()
+        self.host.assert_not_called()
+        self.assertFalse(self.active.exists())
+
+    def test_receipt_commit_mismatch_stops_before_any_host_stage(self):
+        slots = self.enable_verified_previews()
+        receipt = Path(slots["previous"]["wheel"]).with_name("receipt.json")
+        source = json.loads(receipt.read_bytes())
+        source["commit"] = "f" * 40
+        receipt.write_text(json.dumps(source), encoding="utf-8")
+        self.assertEqual(self.run_trial(), 1)
+        self.assertEqual(self.read_report()["stages"], [])
+        self.host.assert_not_called()
+        self.assertFalse(self.active.exists())
 
     def check_candidate_failure(self, failure):
         self.failure = failure

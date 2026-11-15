@@ -4,8 +4,22 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      previous_run:
+        description: 初始预览的 main CI 运行编号（双预览模式需填写全部四项）
+        type: string
+      previous_commit:
+        description: 初始预览的完整 main 提交 SHA
+        type: string
+      candidate_run:
+        description: 升级预览的 main CI 运行编号
+        type: string
+      candidate_commit:
+        description: 升级预览的完整 main 提交 SHA
+        type: string
 permissions:
   contents: read
+  actions: read
 
 jobs:
   lifecycle:
@@ -24,17 +38,36 @@ jobs:
       - name: 安装锁定的 Codex CLI
         run: npm ci --prefix pilot/codex_time --ignore-scripts --no-audit --no-fund
       - name: 从本提交构建网关并准备两个第三方版本
+        if: ${{ !inputs.previous_run && !inputs.previous_commit && !inputs.candidate_run && !inputs.candidate_commit }}
         shell: bash
         run: |
           set -euo pipefail
           python -m pip wheel --no-deps --wheel-dir artifacts/pilot-wheels .
           python -X utf8 pilot/codex_time/prepare.py --root artifacts/pilot-env --wheel artifacts/pilot-wheels/*.whl
+      - name: 从两次指定的成功构建下载并安装已核验网关
+        if: ${{ inputs.previous_run || inputs.previous_commit || inputs.candidate_run || inputs.candidate_commit }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS_RUN: ${{ inputs.previous_run }}
+          PREVIOUS_COMMIT: ${{ inputs.previous_commit }}
+          CANDIDATE_RUN: ${{ inputs.candidate_run }}
+          CANDIDATE_COMMIT: ${{ inputs.candidate_commit }}
+        shell: bash
+        run: |
+          python -X utf8 -m pilot.codex_time.prepare --root artifacts/pilot-env \
+            --previous-preview "$PREVIOUS_RUN" "$PREVIOUS_COMMIT" \
+            --candidate-preview "$CANDIDATE_RUN" "$CANDIDATE_COMMIT"
       - name: Codex 宿主安装、升级和回退
-        run: >-
-          python -X utf8 -m pilot.codex_time.run
-          --codex pilot/codex_time/node_modules/.bin/codex
-          --environment artifacts/pilot-env/environment.json
-          --output-dir artifacts/codex-time-lifecycle
+        env:
+          PREVIOUS_RUN: ${{ inputs.previous_run }}
+        shell: bash
+        run: |
+          options=()
+          if [[ -n "$PREVIOUS_RUN" ]]; then options+=(--require-verified-gateways); fi
+          python -X utf8 -m pilot.codex_time.run "${options[@]}" \
+            --codex pilot/codex_time/node_modules/.bin/codex \
+            --environment artifacts/pilot-env/environment.json \
+            --output-dir artifacts/codex-time-lifecycle
       - name: 保存阶段证据
         if: always()
         uses: actions/upload-artifact@v7.0.2

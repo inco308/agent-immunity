@@ -4,7 +4,7 @@
 
 ## 下载
 
-使用 Python 3.10 或更高版本，在包含本下载脚本的源码仓库根目录运行。需要安装支持 `gh api --allow-escape-sequences` 的 GitHub CLI，且 `gh` 已登录 `github.com` 并能读取该仓库的 Actions 产物。命令适用于 PowerShell 和 Linux shell。[gh api 参数](https://cli.github.com/manual/gh_api)
+使用 Python 3.10 或更高版本，在包含本下载脚本的源码仓库根目录运行。需要安装 GitHub CLI，且 `gh` 已登录 `github.com` 并能读取该仓库的 Actions 产物。命令适用于 PowerShell 和 Linux shell。[gh api 参数](https://cli.github.com/manual/gh_api)
 
 ```text
 python -m scripts.fetch_verified_dist --commit <40位小写SHA> --run-id <正整数> --output <新目录>
@@ -27,6 +27,8 @@ python -m scripts.fetch_verified_dist --commit 7328ca6949dcade4bbf186c827c3eee9c
 | 两个分发包 | ZIP 根目录恰有同版本 wheel、源码包和校验清单。逐个计算包的 SHA-256，结果分别与清单中的对应行相同。 |
 
 在收据中，`commit`、`run_url` 和 `artifact_id` 可定位到提交、运行和产物。`archive_digest` 是与 GitHub 记录比对过的 ZIP 摘要。`files` 按文件名记录 wheel 和源码包各自的实测 SHA-256。日后复核本地副本时，可在 `verified/` 中运行 `sha256sum -c SHA256SUMS`。PowerShell 可使用 `Get-FileHash -Algorithm SHA256 -Path *.whl,*.tar.gz`，按文件名与清单比较。[GitHub 运行记录字段](https://docs.github.com/en/rest/actions/workflow-runs#get-a-workflow-run) · [GitHub 产物字段](https://docs.github.com/en/rest/actions/artifacts#list-workflow-run-artifacts)
+
+要在真实宿主中验证升级和回退，可向 Codex 时区工具试点提交两组运行编号与 SHA。准备程序会为原网关和候选网关分别下载、核验和安装 wheel。演练报告将每次实际使用的安装环境与对应收据、业务结果和策略拒绝关联起来。[用两个已核验的网关构建演练回退](codex-time-pilot.md#用两个已核验的网关构建演练回退)
 
 ## 下载失败时
 
