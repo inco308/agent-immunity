@@ -20,9 +20,12 @@ DATA = {"agent_immunity/dataset/cases.json", "agent_immunity/dataset/policy.json
 INSTALL_PROBE = """
 from importlib.metadata import distribution
 import json
+import os
 from pathlib import Path
 import platform
+import struct
 import sys
+import sysconfig
 import agent_immunity
 
 prefix = (Path.cwd() / "env").resolve(strict=True)
@@ -44,9 +47,20 @@ elif system == "Windows":
     os_version = platform.win32_ver()[1]
 else:
     os_version = platform.release()
-print(json.dumps({"installed_version": dist.version, "implementation": platform.python_implementation(),
-                  "python": platform.python_version(), "system": system, "os_version": os_version,
-                  "machine": platform.machine()}))
+# sysconfig 在 POSIX 上会直接返回交叉构建覆盖值；这里观测正在运行的解释器。
+os.environ.pop("_PYTHON_HOST_PLATFORM", None)
+observed = {"installed_version": dist.version, "implementation": platform.python_implementation(),
+            "python": platform.python_version(), "system": system, "os_version": os_version,
+            "machine": platform.machine(), "python_platform": sysconfig.get_platform(),
+            "pointer_bits": struct.calcsize("P") * 8}
+if system == "Linux":
+    # 发行版与内核分别观测；部分精简安装没有可读的 os-release。
+    try:
+        release = platform.freedesktop_os_release()
+    except (OSError, UnicodeError):
+        release = {}
+    observed.update(distro_id=release.get("ID"), distro_version=release.get("VERSION_ID"))
+print(json.dumps(observed))
 """
 
 
