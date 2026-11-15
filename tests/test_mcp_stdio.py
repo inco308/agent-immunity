@@ -245,15 +245,18 @@ class StdioIntegrationTests(unittest.TestCase):
                 client.close()
 
     def test_forward_frame_over_limit_does_not_mark_call_as_submitted(self):
-        limit = 512
-        client = self.client(policy={**policy_data(self.root), "max_bytes": limit})
+        arguments = {"path": str((self.root / "file.txt").resolve()), "content": "a" * 512}
         req = {"jsonrpc": "2.0", "id": "not-queued", "method": "tools/call", "params": {
-            "name": "write_file", "arguments": {"path": "file.txt", "content": ""}}}
-        # 输入恰好符合预算。代理将相对路径补全后，转发帧才会超限。
+            "name": "write_file", "arguments": arguments}}
+
         def frame():
-            return (json.dumps(req, separators=(",", ":")) + "\n").encode()
-        req["params"]["arguments"]["content"] = "a" * (limit - len(frame()))
-        self.assertEqual(len(frame()), limit)
+            return (json.dumps(req, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
+
+        # 按实际绝对路径设置预算：规范化参数本身能通过，完整转发帧恰好多一个字节。
+        limit = len(frame()) - 1
+        arguments["path"] = "file.txt"
+        self.assertLessEqual(len(frame()), limit)
+        client = self.client(policy={**policy_data(self.root), "max_bytes": limit})
         client.process.stdin.write(frame())
         client.process.stdin.flush()
         response = client.receive()
