@@ -1,0 +1,38 @@
+name: container-deployment
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  least-privilege:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: 安装验收客户端并构建本提交的 wheel
+        run: |
+          python -m pip install --require-hashes -r interop/requirements.lock
+          python -m pip wheel --no-deps --wheel-dir artifacts/container-wheels .
+      - name: 只发送部署所需文件到构建器
+        run: |
+          python -X utf8 deploy/container/build_context.py --wheel artifacts/container-wheels/*.whl --output artifacts/container-build
+          docker --host unix:///var/run/docker.sock build --network=none --platform linux/amd64 -t agent-immunity-pilot:local artifacts/container-build
+      - name: 验证工具权限与 Linux 强制执行的边界
+        run: python -X utf8 deploy/container/verify_deployment.py --image agent-immunity-pilot:local --output artifacts/container-e2e/report.json
+      - name: 保留部署验收报告
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: container-deployment-report
+          path: artifacts/container-e2e/report.json
+          if-no-files-found: warn

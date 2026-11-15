@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "workspace": "/workspace",
+  "tools": {
+    "read_file": {
+      "capabilities": ["read"],
+      "parameters": {"path": "string"},
+      "path_fields": ["path"],
+      "roots": ["input", "output"],
+      "output_untrusted": true
+    },
+    "write_file": {
+      "capabilities": ["write"],
+      "parameters": {"path": "string", "content": "string"},
+      "path_fields": ["path"],
+      "roots": ["output"],
+      "output_untrusted": false
+    }
+  }
+}

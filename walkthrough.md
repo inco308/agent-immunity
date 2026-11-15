@@ -140,6 +140,12 @@ wheel 和 sdist 在仓库外的两个全新虚拟环境分别安装。两个 CLI
 
 真实编码宿主的三阶段由 `codex-time-pilot` CI 在独立账号中运行。下载对应提交的 `codex-time-lifecycle` 报告，可以复核阶段结果和版本字段。[操作指南](docs/codex-time-pilot.md)
 
+## Linux 容器文件工具部署验收
+
+从提交 `7328ca6` 的应用源码构建 wheel，以四个文件组成镜像构建上下文。本轮在 WSL 的本地 Docker Linux/amd64 引擎完成实际验收。官方 SDK 1.30.0 经 stdio 读到本次随机输入，写回的报告与宿主文件一致。写入只读输入和调用隐藏的版本工具分别得到 `ARGUMENTS_DENIED`、`UNKNOWN_TOOL`。
+
+同容器独立进程报告 UID/GID 为 1000:1000，有效 capabilities 为 0、NoNewPrivs 为 1，网络命名空间仅见 lo。绕过代理直接在根文件系统和输入挂载尝试创建文件都得到 EROFS，输出挂载写入成功。运行器确认已回收该验证容器。[部署指南与边界](docs/container-deployment.md)
+
 ## 当前适用范围
 
 可以作为边界公开、可运行、可复核的实验性开源版本使用。实际接入仍需验证具体客户端与上游的兼容性，并核实对应提交的远端 CI；使用真实模型做攻击诱导和任务完成率测试是另一个尚未完成的评估范围。

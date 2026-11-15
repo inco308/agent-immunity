@@ -20,6 +20,8 @@ Agent Immunity 为本地 MCP stdio 工具提供显式策略检查。维护者可
 
 路径检查不消除检查与使用之间的竞态，origin 检查不约束 DNS 解析结果或 HTTP 跳转。取消和终止进程不等于回滚已发生的副作用，也不保证回收全部后代进程。完整边界见 [SECURITY.md](SECURITY.md)。
 
+在 Linux 上试用本地文件工具时，可将输入目录挂为只读，只向容器挂载一个可写的业务输出目录。构建命令和文件验收步骤见 [Docker 最小权限部署样例](docs/container-deployment.md)。
+
 ## 快速验证
 
 先在仓库根目录运行策略体检。安装发行包后可使用 `agent-immunity-check` 命令。提供原始上游工具目录后，还可以检查工具名、必填参数和类型漂移。复杂约束会提示人工复核。[体检、安装与退出码](docs/doctor.md)
