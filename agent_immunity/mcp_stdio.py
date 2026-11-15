@@ -5,7 +5,7 @@ import subprocess
 import sys
 import threading
 import time
-from . import DynamicImmunityEngine, Policy, ToolCall, ToolResult
+from . import DynamicImmunityEngine, Policy, ToolCall, ToolResult, __version__
 from .core.policy import canonical, strict_json
 
 VERSION = "2025-06-18"
@@ -144,7 +144,7 @@ class StdioProxy:
                 self.emit(error(call_id, -32602, "无效或重复初始化"))
                 return
             # 固定代理子集，不向上游宣告客户端回调、采样等未代理能力。
-            forwarded = {"jsonrpc": "2.0", "id": call_id, "method": method, "params": {"protocolVersion": VERSION, "capabilities": {}, "clientInfo": {"name": "agent-immunity", "version": "0.2.0"}}}
+            forwarded = {"jsonrpc": "2.0", "id": call_id, "method": method, "params": {"protocolVersion": VERSION, "capabilities": {}, "clientInfo": {"name": "agent-immunity", "version": __version__}}}
             self.phase = "INITIALIZING"
             self.dispatch(forwarded)
             return

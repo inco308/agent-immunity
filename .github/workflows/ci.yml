@@ -21,21 +21,22 @@ jobs:
       - name: 测试与模拟规则基准
         shell: pwsh
         run: ./verify.ps1
-      - name: 构建并安装发行包
-        shell: pwsh
-        run: |
-          python -m pip wheel . --no-deps --wheel-dir artifacts/wheels
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -m venv artifacts/package-venv
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $packagePython = if ($IsWindows) { "artifacts/package-venv/Scripts/python.exe" } else { "artifacts/package-venv/bin/python" }
-          $wheel = (Get-ChildItem artifacts/wheels/agent_immunity-*.whl | Select-Object -First 1).FullName
-          & $packagePython -m pip install --no-deps $wheel
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $packagePython -I -X utf8 -m agent_immunity.mcp_stdio --help
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $packagePython -I -X utf8 -m agent_immunity.benchmark.run_evaluation --output artifacts/installed-benchmark.json --repeats 2
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: 安装构建前端
+        run: python -m pip install build==1.6.1
+      - name: 构建源码分发包及其 wheel
+        run: python -m build --outdir dist
+      - name: 检查归档内容、独立安装和 SHA-256
+        run: python -X utf8 scripts/check_dist.py dist
+      - name: 保存可下载的发行文件
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: agent-immunity-dist
+          path: |
+            dist/agent_immunity-*.whl
+            dist/agent_immunity-*.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
   interop:
     strategy:
       fail-fast: false
@@ -62,6 +63,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: 真实客户端与 SDK 上游端到端验证
         run: python -X utf8 interop/run_e2e.py
+      - name: 上游目录采集与预部署检查
+        shell: pwsh
+        run: |
+          python -X utf8 -m unittest interop.test_capture_catalog -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -X utf8 -m interop.capture_catalog --output artifacts/example-tools.json -- python examples/local_tools.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -X utf8 -m agent_immunity.doctor --policy examples/policy.json --catalog artifacts/example-tools.json --json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: LLM 评测器隔离与验收回归（测试替身，非模型成绩）
         run: python -X utf8 -m unittest interop.test_llm_harness interop.test_ollama_recovery -v
       - name: 保存公开验证结果

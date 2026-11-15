@@ -1,0 +1,2 @@
+# setuptools 默认会把项目根目录下的测试一起收进 sdist。
+prune tests
