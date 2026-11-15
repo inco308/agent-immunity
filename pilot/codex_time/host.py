@@ -27,9 +27,7 @@ def rpc(child, seq, method, params):
 
 
 def host_stage(binary, project, expect_weekday):
-    # 信任范围仅为此次新建项目。Codex 从它自己的 .codex/config.toml 读取 MCP 注册。
-    trust = "projects." + json.dumps(str(project), ensure_ascii=False) + '.trust_level="trusted"'
-    child = _JsonProcess([str(binary), "--no-daemon", "app-server", "--listen", "stdio://", "-c", trust],
+    child = _JsonProcess([str(binary), "--no-daemon", "app-server", "--listen", "stdio://"],
                          project, 90)
     try:
         rpc(child, 1, "initialize", {"clientInfo": {"name": "time_pilot", "version": "1"}})
@@ -45,13 +43,14 @@ def host_stage(binary, project, expect_weekday):
             })
             seq += 1
             statuses = [s for s in result["data"] if s["name"] == SERVER_NAME]
-            if statuses and statuses[0].get("runtimeStatus") == "connected":
+            runtime = statuses[0].get("runtimeStatus") if statuses else None
+            if statuses and (runtime == "connected" or (runtime is None and statuses[0].get("tools"))):
                 names = sorted(statuses[0]["tools"])
                 break
             if statuses and statuses[0].get("runtimeStatus") in {"failed", "authenticationRequired"}:
                 raise RuntimeError("Codex 无法连接试点网关")
             if seq > 50:
-                raise RuntimeError("Codex 没有加载项目中的 MCP 配置")
+                raise RuntimeError(f"Codex 工具发现超时，注册可见={bool(statuses)}，宿主状态={runtime!r}")
             time.sleep(.25)
         if names != ["convert_time"]:
             raise ValueError("Codex 中可见的工具与本地登记不一致")

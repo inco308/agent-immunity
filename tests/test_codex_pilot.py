@@ -58,6 +58,16 @@ class CodexPilotLifecycleTests(unittest.TestCase):
             return f"codex-cli {pilot.HOST_VERSION}\n"
         if argv == ["git", "init", "--quiet"]:
             return ""
+        if argv[1:] == ["mcp", "list", "--json"]:
+            return "[]"
+        if argv[1:5] == ["mcp", "add", "time_pilot", "--"]:
+            self.registration = {"transport": {"command": argv[5], "args": argv[6:]}, "enabled": True}
+            return ""
+        if argv[1:] == ["mcp", "get", "time_pilot", "--json"]:
+            return json.dumps(self.registration)
+        if argv[1:] == ["mcp", "remove", "time_pilot"]:
+            self.registration = None
+            return ""
         self.fail(f"非预期的外部命令类型：{Path(argv[0]).name}")
 
     def inspect_active_config(self, _executable, project, *, expect_weekday):
@@ -111,6 +121,7 @@ class CodexPilotLifecycleTests(unittest.TestCase):
         self.assertEqual([policy_sha for _, _, policy_sha in self.observations], [expected_policy_sha] * 3)
         self.assertEqual(checksum(self.policy_path.read_bytes()), expected_policy_sha)
         self.assertEqual(report["policy_sha256"], expected_policy_sha)
+        self.assertIsNone(self.registration)
 
     def test_preexisting_output_directory_preserves_user_files(self):
         self.active.parent.mkdir(parents=True)

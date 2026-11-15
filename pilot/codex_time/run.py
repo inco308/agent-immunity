@@ -48,6 +48,18 @@ def run_command(args, cwd):
                           stdout=subprocess.PIPE).stdout
 
 
+def register(binary, config, cwd):
+    """通过 Codex 自身的 CLI 激活所选版本，并回读宿主保存的配置。"""
+    import tomllib  # 试点环境使用 Python 3.12
+    target = tomllib.loads(config.decode("utf-8"))["mcp_servers"][SERVER_NAME]
+    run_command([binary, "mcp", "add", SERVER_NAME, "--", target["command"], *target["args"]], cwd)
+    saved = json.loads(run_command([binary, "mcp", "get", SERVER_NAME, "--json"], cwd))
+    transport = saved.get("transport") or {}
+    if (transport.get("command") != target["command"] or transport.get("args") != target["args"]
+            or saved.get("enabled") is False):
+        raise ValueError("Codex 注册回读与准备的启动参数不一致")
+
+
 def preflight(environment, slot, root, policy):
     upstream = environment[slot]
     version = run_command([upstream, "-I", "-c",
@@ -97,6 +109,8 @@ def run(args):
 
     save()
     verified = None
+    temporary_registration = False
+    success = False
     try:
         probes = {slot: preflight(environment, slot, root, policy) for slot in VERSIONS}
         report["upstreams"] = probes
@@ -111,6 +125,10 @@ def run(args):
                 raise ValueError("Codex 版本与该试点的固定版本不符")
             report["codex_version"] = host_version
             run_command(["git", "init", "--quiet"], project)
+            existing = json.loads(run_command([executable, "mcp", "list", "--json"], root))
+            if not isinstance(existing, list) or existing:
+                raise ValueError("一次性宿主演练需要空的 MCP 注册表")
+            temporary_registration = True
             original = config_bytes(environment["gateway"], policy, environment["previous"])
             upgrade = config_bytes(environment["gateway"], policy, environment["candidate"])
             if original == upgrade:
@@ -120,6 +138,7 @@ def run(args):
                 report["attempted_phase"] = phase
                 started = time.monotonic()
                 atomic_write(active, config)
+                register(executable, active.read_bytes(), root)
                 result = host_stage(executable, project, expect_weekday=slot == "candidate")
                 if active.read_bytes() != config:
                     raise RuntimeError("宿主配置在演练过程中被改变")
@@ -128,7 +147,7 @@ def run(args):
                                          "elapsed_seconds": round(time.monotonic() - started, 3), **result})
                 save()
         report["status"] = "passed"
-        return 0
+        success = True
     except (ValueError, KeyError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
         report["status"] = "failed"
         # 失败时只恢复本次新建项目内已验收的配置。既有部署不受试点脚本影响。
@@ -139,10 +158,17 @@ def run(args):
             active.unlink()
         report["failure_type"] = type(exc).__name__
         print(str(exc) if isinstance(exc, (ValueError, RuntimeError)) else type(exc).__name__, file=sys.stderr)
-        return 1
     finally:
+        if temporary_registration:
+            try:
+                run_command([executable, "mcp", "remove", SERVER_NAME], root)
+            except (OSError, RuntimeError, subprocess.SubprocessError):
+                success = False
+                report["status"] = "failed"
+                report["cleanup_error"] = "临时 MCP 注册清理失败"
         save()
         print(f"{report['status']}  {report_path}")
+    return 0 if success else 1
 
 
 if __name__ == "__main__":
