@@ -54,3 +54,22 @@ python -X utf8 -m pilot.codex_time.run --require-macos-arm64 \
 上述路径指向锁定 npm 包中的原生程序。运行器用 `lipo -archs` 核对该文件只含 arm64，并将同一可执行文件用于三个阶段。网关以及新旧上游的解释器会分别报告自身架构与 Python 补丁版本。这个模式要求完整宿主调用，单独的 `--preflight-only` 仍可用于常规策略体检。
 
 在 `codex-time-pilot` 工作流中选择 `lifecycle-macos-arm64` 作业，下载 `codex-time-lifecycle-macos-arm64` 产物。查看 `report.json` 的 `host_environment`、`codex_version` 和 `stages`，将原生架构与三阶段的工具发现、时区结果、策略拒绝及配置摘要放在一起核对。Ubuntu 作业继续提供其原有的独立报告。
+
+## 在 Windows x64 上复现宿主演练
+
+在干净的 Windows x64 测试账号中安装 64 位 CPython 3.12、Node 24.22.1 和 Git，从仓库根目录用 PowerShell 执行下列命令。每次演练选择一个新的 `--output-dir`。
+
+```powershell
+py -3.12 -m pip wheel --no-deps --wheel-dir artifacts/pilot-wheels .
+if ($LASTEXITCODE -ne 0) { throw '构建网关失败' }
+$wheel = @(Get-ChildItem -File artifacts/pilot-wheels -Filter 'agent_immunity-*.whl')
+if ($wheel.Count -ne 1) { throw '请选择本次构建的唯一 wheel' }
+py -3.12 -X utf8 pilot/codex_time/prepare.py --root artifacts/pilot-env --wheel $wheel[0].FullName
+if ($LASTEXITCODE -ne 0) { throw '试点环境准备失败' }
+npm.cmd ci --prefix pilot/codex_time --ignore-scripts --no-audit --no-fund
+if ($LASTEXITCODE -ne 0) { throw '安装锁定的 Codex CLI 失败' }
+$codexExe = 'pilot/codex_time/node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin/codex.exe'
+py -3.12 -X utf8 -m pilot.codex_time.run --require-windows-x64 --codex $codexExe --environment artifacts/pilot-env/environment.json --output-dir artifacts/windows-time-run
+```
+
+运行器核对 Windows 系统的原生机器类型和所选 `codex.exe` 的 AMD64 可执行文件头，并用该文件运行三阶段。网关和两个上游分别报告其解释器版本、机器架构和 Python 构建平台 `win-amd64`。在 `lifecycle-windows-x64` 作业下载 `codex-time-lifecycle-windows-x64`，查看 `report.json` 中的 `host_environment` 和 `stages`。这条路径验收 Windows Server 2025 x64 上的 CLI 线程级 MCP 调用。日常桌面非管理员账号和图形界面的行为仍需各自验证。

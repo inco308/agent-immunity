@@ -205,15 +205,22 @@ class CodexPilotLifecycleTests(unittest.TestCase):
         self.command.assert_not_called()
         self.host.assert_not_called()
 
-    def test_apple_silicon_observation_is_bound_to_the_host_used_in_all_stages(self):
-        self.args.require_macos_arm64 = True
-        observed = {"system": "Darwin", "codex_arch": "arm64"}
-        with patch.object(pilot, "macos_host_environment", return_value=observed) as probe:
+    def check_native_host_binding(self, flag, probe_name, observed):
+        setattr(self.args, flag, True)
+        with patch.object(pilot, probe_name, return_value=observed) as probe:
             self.assertEqual(self.run_trial(), 0)
         binary, environment, root = probe.call_args.args
         self.assertEqual((environment, root), (self.environment, self.output))
         self.assertEqual([call.args[0] for call in self.host.call_args_list], [binary] * 3)
         self.assertEqual(self.read_report()["host_environment"], observed)
+
+    def test_apple_silicon_observation_is_bound_to_the_host_used_in_all_stages(self):
+        self.check_native_host_binding("require_macos_arm64", "macos_host_environment",
+                                       {"system": "Darwin", "codex_arch": "arm64"})
+
+    def test_windows_observation_is_bound_to_the_host_used_in_all_stages(self):
+        self.check_native_host_binding("require_windows_x64", "windows_host_environment",
+                                       {"system": "Windows", "codex_arch": "x64"})
 
 
 if __name__ == "__main__":
