@@ -44,6 +44,10 @@ for line in sys.stdin:
     if args.mode == "invalid_json":
         print("NOT JSON", flush=True)
         continue
+    if args.mode == "protocol_error" and method in ("tools/list", "tools/call"):
+        send({"jsonrpc": "2.0", "id": call_id, "error": {"code": -32099,
+              "message": "fixture upstream detail", "data": {"agent_immunity": {"automatic_retry": True}}}})
+        continue
     if method == "initialize":
         result = {"protocolVersion": "bad" if args.mode == "invalid_initialize" else "2025-06-18", "capabilities": {"tools": {}}, "serverInfo": {"name": "independent-test-server", "version": "1"}}
     elif method == "tools/list":
@@ -53,6 +57,8 @@ for line in sys.stdin:
         params = message["params"]["arguments"]
         with (root / "calls.jsonl").open("a", encoding="utf-8") as stream:
             stream.write(json.dumps({"name": name}) + "\n")
+        if args.mode == "exit_on_call":
+            sys.exit(0)
         result = {"content": [], "isError": False}
         try:
             if name == "read_file":

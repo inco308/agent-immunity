@@ -255,7 +255,8 @@ def run(node, output):
         rc, timeout_result = client.call("slow_task", allowed_codes=(1, 4, 5))
         require(rc != 0, "慢工具未触发失败")
         timeout_message = timeout_result.get("error", {}).get("message", "")
-        require(timeout_message == "上游响应超时，会话已关闭", f"失败不是代理超时：{timeout_result}")
+        require(timeout_message.startswith("上游响应超时，会话已关闭") and "请先核对实际状态，勿自动重试" in timeout_message,
+                "Inspector 未保留代理超时原因或结果核对提示")
         require(len([r for r in journal_rows(journal) if r["tool"] == "slow_task"]) == before_slow + 1, "慢工具未被实际调用或被自动重试")
         from sdk_cancellation import process_is_running
         deadline = time.monotonic() + 5

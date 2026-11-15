@@ -1,6 +1,7 @@
 """真实客户端进程、代理进程、上游进程及回环 HTTP 接收器的集成测试。"""
 import base64
 from http.server import BaseHTTPRequestHandler, HTTPServer
+import io
 import json
 import os
 from pathlib import Path
@@ -9,7 +10,10 @@ import subprocess
 import sys
 import threading
 import unittest
-from tests.support import DATA, FIXTURES, policy_data, temporary_directory
+from unittest.mock import patch
+
+from agent_immunity.mcp_stdio import StdioProxy
+from tests.support import DATA, FIXTURES, policy, policy_data, temporary_directory
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -85,12 +89,20 @@ class StdioIntegrationTests(unittest.TestCase):
         path = self.root / "calls.jsonl"
         return [] if not path.exists() else [json.loads(line)["name"] for line in path.read_text().splitlines()]
 
+    def assert_unknown_error(self, response, call_id, code):
+        self.assertEqual(response["id"], call_id)
+        self.assertNotIn("result", response)
+        self.assertEqual(response["error"]["code"], code)
+        self.assertEqual(response["error"]["data"], {"agent_immunity": {"outcome": "unknown", "automatic_retry": False}})
+        self.assertIs(response["error"]["data"]["agent_immunity"]["automatic_retry"], False)
+
     def test_real_handshake_list_and_file_side_effects_R13_R16(self):
         client = self.client()
         listing = client.request("tools/list")
         self.assertNotIn("dispatch", [tool["name"] for tool in listing["result"]["tools"]])
         result = client.call("write_file", {"path": "report.txt", "content": "real artifact"})
         self.assertFalse(result["result"]["isError"])
+        self.assertNotIn("error", result)
         self.assertEqual((self.root / "report.txt").read_text(), "real artifact")
         read = client.call("read_file", {"path": "report.txt"})
         self.assertEqual(read["result"]["content"][0]["text"], "real artifact")
@@ -109,7 +121,9 @@ class StdioIntegrationTests(unittest.TestCase):
     def test_denied_calls_do_not_reach_upstream(self):
         client = self.client()
         for name, arguments in [("dispatch", {}), ("http_execute", {}), ("write_file", {"path": "../escape.txt", "content": "bad"})]:
-            self.assertTrue(client.call(name, arguments)["result"]["isError"])
+            response = client.call(name, arguments)
+            self.assertTrue(response["result"]["isError"])
+            self.assertNotIn("error", response)
         self.assertEqual(self.calls(), [])
         self.assertFalse((self.root / "unlisted-marker.txt").exists())
 
@@ -120,6 +134,7 @@ class StdioIntegrationTests(unittest.TestCase):
         self.assertEqual(response["id"], client.next_id)
         bad = client.call(123, {})
         self.assertEqual(bad["error"]["code"], -32602)
+        self.assertNotIn("data", bad["error"])
         self.assertEqual(client.request("ping")["result"], {})
 
     def test_real_loopback_egress_and_structured_secret_R04_R12(self):
@@ -154,7 +169,7 @@ class StdioIntegrationTests(unittest.TestCase):
     def test_timeout_closes_session(self):
         client = self.client(timeout=0.6)
         response = client.call("stall", {})
-        self.assertEqual(response["error"]["code"], -32001)
+        self.assert_unknown_error(response, client.next_id, -32001)
         self.assertEqual(client.process.wait(timeout=5), 1)
 
     def test_cancellation_is_processed_while_call_pending(self):
@@ -162,8 +177,7 @@ class StdioIntegrationTests(unittest.TestCase):
         client.send({"jsonrpc": "2.0", "id": 90, "method": "tools/call", "params": {"name": "stall", "arguments": {}}})
         client.notify("notifications/cancelled", {"requestId": 90})
         response = client.receive()
-        self.assertEqual(response["id"], 90)
-        self.assertEqual(response["error"]["code"], -32800)
+        self.assert_unknown_error(response, 90, -32800)
         self.assertEqual(client.process.wait(timeout=5), 1)
 
     def test_upstream_failure_is_not_reported_as_success(self):
@@ -172,12 +186,15 @@ class StdioIntegrationTests(unittest.TestCase):
                 client = self.client(mode=mode, handshake=False)
                 result = client.request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "1"}})
                 self.assertIn("error", result)
+                self.assertNotIn("data", result["error"])
                 self.assertEqual(client.process.wait(timeout=5), 1)
                 client.close()
 
     def test_tool_error_does_not_end_valid_session(self):
         client = self.client()
-        self.assertTrue(client.call("fail", {})["result"]["isError"])
+        response = client.call("fail", {})
+        self.assertTrue(response["result"]["isError"])
+        self.assertNotIn("error", response)
         self.assertFalse(client.call("python_version", {})["result"]["isError"])
 
     def test_malformed_json_and_unsupported_methods(self):
@@ -192,16 +209,97 @@ class StdioIntegrationTests(unittest.TestCase):
         client = self.client(mode="unresponsive", handshake=False, timeout=0.6)
         response = client.request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "1"}})
         self.assertEqual(response["error"]["code"], -32001)
+        self.assertNotIn("data", response["error"])
         self.assertEqual(client.process.wait(timeout=5), 1)
 
     def test_invalid_result_or_response_id_closes_session(self):
-        for mode in ("bad_result", "bad_id", "oversized_result", "bad_meta"):
+        for mode, code in (("bad_result", -32603), ("bad_id", -32603), ("oversized_result", -32600),
+                           ("bad_meta", -32603)):
             with self.subTest(mode=mode):
                 client = self.client(mode=mode)
                 response = client.call("document", {})
-                self.assertIn("error", response)
+                self.assert_unknown_error(response, client.next_id, code)
                 self.assertEqual(client.process.wait(timeout=5), 1)
                 client.close()
+
+    def test_disconnect_before_write_has_the_same_unknown_outcome(self):
+        client = self.client(mode="exit_on_call")
+        response = client.call("write_file", {"path": "receipt.txt", "content": "example"})
+        self.assert_unknown_error(response, client.next_id, -32003)
+        self.assertEqual(client.process.wait(timeout=5), 1)
+        self.assertEqual(self.calls(), ["write_file"])
+        self.assertFalse((self.root / "receipt.txt").exists())
+
+    def test_protocol_error_is_local_and_limited_to_submitted_tool_calls(self):
+        for method in ("tools/call", "tools/list"):
+            with self.subTest(method=method):
+                client = self.client(mode="protocol_error")
+                response = client.call("document", {}) if method == "tools/call" else client.request(method)
+                self.assertEqual(response["error"]["code"], -32603)
+                self.assertNotIn("fixture upstream detail", str(response))
+                if method == "tools/call":
+                    self.assert_unknown_error(response, client.next_id, -32603)
+                else:
+                    self.assertNotIn("data", response["error"])
+                self.assertEqual(client.process.wait(timeout=5), 1)
+                client.close()
+
+    def test_forward_frame_over_limit_does_not_mark_call_as_submitted(self):
+        limit = 512
+        client = self.client(policy={**policy_data(self.root), "max_bytes": limit})
+        req = {"jsonrpc": "2.0", "id": "not-queued", "method": "tools/call", "params": {
+            "name": "write_file", "arguments": {"path": "file.txt", "content": ""}}}
+        # 输入恰好符合预算。代理将相对路径补全后，转发帧才会超限。
+        def frame():
+            return (json.dumps(req, separators=(",", ":")) + "\n").encode()
+        req["params"]["arguments"]["content"] = "a" * (limit - len(frame()))
+        self.assertEqual(len(frame()), limit)
+        client.process.stdin.write(frame())
+        client.process.stdin.flush()
+        response = client.receive()
+        self.assertEqual((response["id"], response["error"]["code"]), ("not-queued", -32603))
+        self.assertNotIn("data", response["error"])
+        self.assertEqual(client.process.wait(timeout=5), 1)
+        self.assertEqual(self.calls(), [])
+
+    def test_full_outgoing_queue_does_not_mark_call_as_submitted(self):
+        request = {"jsonrpc": "2.0", "id": "not-queued", "method": "tools/call",
+                   "params": {"name": "document", "arguments": {}}}
+        source = io.BytesIO((json.dumps(request) + "\n").encode())
+        output = io.BytesIO()
+        command = [sys.executable, "-u", str(FIXTURES / "mcp_server.py"), "--root", str(self.root)]
+        proxy = StdioProxy(policy(self.root), command, input_stream=source, output_stream=output)
+        proxy.phase = "READY"
+        proxy.outgoing = queue.Queue(maxsize=1)
+        proxy.outgoing.put_nowait(b"reserved")
+        with patch.object(proxy, "writer"):
+            self.assertEqual(proxy.run(), 1)
+        response = json.loads(output.getvalue())
+        self.assertEqual((response["id"], response["error"]["code"]), ("not-queued", -32603))
+        self.assertNotIn("data", response["error"])
+        self.assertEqual(self.calls(), [])
+
+    def test_partial_client_delivery_does_not_attempt_a_second_response(self):
+        request = {"jsonrpc": "2.0", "id": 18, "method": "tools/call", "params": {"name": "document"}}
+        for key, value in (("result", {"content": []}), ("error", {"code": -32603, "message": "failed"})):
+            with self.subTest(response=key):
+                proxy = StdioProxy(policy(self.root), [sys.executable, "-c", "import sys; sys.stdin.read()"],
+                                   input_stream=io.BytesIO(), output_stream=io.BytesIO())
+                proxy.phase = "READY"
+                response = {"jsonrpc": "2.0", "id": 18, key: value}
+                for source, frame in (("client", request), ("upstream", response)):
+                    proxy.messages.put((source, json.dumps(frame).encode()))
+                # 两帧已到达事件循环。模拟客户端在接收第一份答复时断开。
+                with patch.object(proxy, "reader"), patch.object(proxy, "writer"), \
+                        patch.object(proxy, "emit", side_effect=BrokenPipeError) as emit:
+                    self.assertEqual(proxy.run(), 1)
+                emit.assert_called_once()
+                reply = emit.call_args.args[0]
+                if key == "result":
+                    self.assertIn("result", reply)
+                    self.assertNotIn("error", reply)
+                else:
+                    self.assert_unknown_error(reply, 18, -32603)
 
     def test_upstream_metadata_cannot_control_proxy_state(self):
         client = self.client(mode="spoofed_meta")
@@ -219,11 +317,15 @@ class StdioIntegrationTests(unittest.TestCase):
         self.assertEqual(invalid["error"]["code"], -32602)
 
     def test_conflicting_pending_request_id_is_terminal(self):
-        client = self.client()
-        client.send({"jsonrpc": "2.0", "id": 91, "method": "tools/call", "params": {"name": "stall", "arguments": {}}})
-        client.send({"jsonrpc": "2.0", "id": 91, "method": "ping"})
-        self.assertEqual(client.receive()["error"]["code"], -32600)
-        self.assertEqual(client.process.wait(timeout=5), 1)
+        for params in ({}, [], {"_meta": "invalid"}):
+            with self.subTest(params=params):
+                client = self.client()
+                client.send({"jsonrpc": "2.0", "id": "dup", "method": "tools/call",
+                             "params": {"name": "stall", "arguments": {}}})
+                client.send({"jsonrpc": "2.0", "id": "dup", "method": "ping", "params": params})
+                self.assert_unknown_error(client.receive(), "dup", -32600)
+                self.assertEqual(client.process.wait(timeout=5), 1)
+                client.close()
 
 if __name__ == "__main__":
     unittest.main()

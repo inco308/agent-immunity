@@ -220,6 +220,7 @@ class DecisionAuditTests(unittest.TestCase):
                 reply = json.loads(output.getvalue())
                 self.assertEqual(reply["id"], REQUEST_MARKER)
                 self.assertEqual(reply["error"]["code"], -32603)
+                self.assertNotIn("data", reply["error"])
                 self.assertNotIn(RESULT_MARKER, json.dumps(reply))
                 self.assertFalse(proxy.running)
                 self.assertNotEqual(proxy.exit_code, 0)

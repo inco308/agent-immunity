@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "workspace": "workspace",
+  "tools": {
+    "append_operation": {
+      "capabilities": ["write"],
+      "parameters": {"path": "string", "operation_id": "string"},
+      "path_fields": ["path"],
+      "roots": ["."]
+    },
+    "query_operation": {
+      "capabilities": ["read"],
+      "parameters": {"path": "string", "operation_id": "string"},
+      "path_fields": ["path"],
+      "roots": ["."]
+    }
+  }
+}
