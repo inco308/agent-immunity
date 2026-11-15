@@ -47,7 +47,8 @@ def source_snapshot(backend):
         paths.append(EVALS / "ollama_actions.py")
     if backend == "dsh":
         paths.append(EVALS / "dsh_plugin.mjs")
-    paths += [SERVER, REPO / "agent_immunity" / "mcp_stdio.py", REPO / "agent_immunity" / "__init__.py"]
+    paths += [SERVER, REPO / "agent_immunity" / "mcp_stdio.py", REPO / "agent_immunity" / "client_output.py",
+              REPO / "agent_immunity" / "__init__.py"]
     paths += sorted((REPO / "agent_immunity" / "core").glob("*.py"))
     return {str(path.relative_to(REPO)).replace("\\", "/"): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
 
