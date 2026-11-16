@@ -58,4 +58,19 @@ agent-immunity-check --help
 agent-immunity --help
 ```
 
-wheel 安装只使用本地文件。从源码包安装时需要构建后端。示例策略与上游脚本可在对应提交的 `examples/` 目录获取。工作流产物有保留期限，正式版本、长期下载地址以及签名与来源验证属于发行路线图中的后续工作。SHA-256 用于校验文件内容。[产品路线图](product-roadmap.md)
+wheel 安装只使用本地文件。从源码包安装时需要构建后端。示例策略与上游脚本可在对应提交的 `examples/` 目录获取。工作流产物有保留期限，正式版本、长期下载地址和发行签名属于路线图中的后续工作。下方命令可用于核对本次下载的构建来源。[产品路线图](product-roadmap.md)
+
+### 安装前核对下载的两个包
+
+在包含核验脚本的仓库根目录运行下列命令。它需要已登录 GitHub 并能读取 Actions 日志和产物的 `gh`。这个可复现的例子使用已审阅的预览分支。检查来自 `main` 的新构建时，改用对应的完整提交 SHA 和 push 运行编号，省略 `--branch`。
+
+```text
+gh run download 43859212373 --repo inco308/agent-immunity --name agent-immunity-dist --dir artifacts/preview-43859212373
+python -X utf8 -m scripts.verify_preview_pair --dist artifacts/preview-43859212373 --commit 0110c4fe33673fb29bea6e5e1182c4a95e26ee00 --run 43859212373 --branch ci/record-installed-mcp-protocol
+```
+
+命令从 Ubuntu / Python 3.12 发布作业的两个上传步骤确认发行 ZIP 和安装收据的产物编号，再核对两份远端归档和本地 wheel、源码包的完整 SHA-256。本地目录需包含这两个普通文件，可另有说明文件；若包含 `SHA256SUMS`，两条记录也须与远端收据一致。核验只读取本地文件。成功时返回 `0` 并输出含提交、运行、作业、产物编号及两份包摘要的 JSON；任一包失配时返回 `1`，错误信息指出失配的包。
+
+这里引用的是远端作业已经完成的 MCP 握手记录。本命令需要第 2 版安装收据、首次尝试即成功的 push 运行，以及仍可读取的上传步骤日志和产物。若这些记录已过期，在线核验会失败。[示例发布作业](https://github.com/inco308/agent-immunity/actions/runs/43859212373/job/133271293375)
+
+实测时，这次作业的两个 `0.3.0a1` 文件均通过；分别用另一作业的同名 wheel 或源码包替换，并按替换后的文件重算本地 `SHA256SUMS`，两次均准确报告对应包的摘要失配。[对照构建](https://github.com/inco308/agent-immunity/actions/runs/43849969478/artifacts/14217545644)

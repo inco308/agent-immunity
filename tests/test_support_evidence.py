@@ -10,6 +10,7 @@ import zipfile
 from unittest.mock import Mock, patch
 
 from scripts import support_evidence as evidence
+from tests.test_x64_install_receipt import install_receipt
 
 
 COMMIT = "a" * 40
@@ -280,6 +281,84 @@ class SupportEvidenceTests(unittest.TestCase):
                     self.assertRaises(ValueError) as error:
                 evidence._report(22, "codex-time-lifecycle")
             self.assertNotIn("GITHUB_FAKE_SIGNED_URL", str(error.exception))
+
+
+class PreviewPairEvidenceTests(unittest.TestCase):
+    def setUp(self):
+        self.branch = "ci/reviewed-preview"
+        self.run = {**run_record(11, "ci"), "head_branch": self.branch}
+        self.job = packaging_job(47, "ubuntu-latest", "3.12", conclusion="skipped")
+        self.job["steps"].extend(x64_steps())
+        self.job["steps"].extend({"name": name, "status": "completed", "conclusion": "success"} for name in (
+            "构建源码分发包及其 wheel", "检查归档内容、独立安装和 SHA-256", evidence.PROTOCOL_STEP, "保存可下载的发行文件",
+        ))
+        self.logs = b""
+        for step, number in (("保存 x64 安装验收报告", 55), ("保存可下载的发行文件", 56)):
+            self.logs += (f"{self.job['name']}\t{step}\t2026-11-16T10:00:00Z Artifact download URL: "
+                          f"{evidence.REPO_URL}/actions/runs/11/artifacts/{number}\n").encode()
+        self.report = install_receipt("ubuntu-latest", "3.12")
+        self.report["schema_version"] = 2
+        self.dist = {}
+        sums = []
+        for p in self.report["packages"]:
+            data = p["kind"].encode()
+            self.dist[p["filename"]] = data
+            p.update(sha256=hashlib.sha256(data).hexdigest(), protocol_version="2025-06-18")
+            sums.append(f"{p['sha256']}  {p['filename']}")
+        self.dist["SHA256SUMS"] = "\r\n".join(reversed(sums)).encode()
+
+    def download(self, commit, run_id, name, *, expected_id):
+        self.assertEqual((commit, run_id), (COMMIT, 11))
+        if (name, expected_id) == ("agent-immunity-dist", 56):
+            members = self.dist
+        elif (name, expected_id) == ("package-install-ubuntu-latest-py3.12", 55):
+            members = {"package-install.json": json.dumps(self.report).encode()}
+        else:
+            raise ValueError("上传日志与产物元数据不符")
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            for filename, data in members.items():
+                archive.writestr(filename, data)
+        return {"id": expected_id, "data": stream.getvalue()}
+
+    def fetch(self, branch=None):
+        args = () if branch is None else (branch,)
+        with patch.object(evidence, "_api", side_effect=[
+                self.run, [{"total_count": 1, "jobs": [self.job]}], self.run]), \
+                patch.object(evidence, "_gh", return_value=self.logs), \
+                patch.object(evidence, "_download_artifact", side_effect=self.download):
+            return evidence.fetch_preview_pair(COMMIT, 11, *args)
+
+    def test_only_explicit_reviewed_branch_can_replace_main(self):
+        self.assertEqual(self.fetch(self.branch), (self.job, self.report, 56, 55))
+        with self.assertRaises(ValueError):
+            self.fetch()
+        for fields in ({"event": "pull_request"}, {"run_attempt": 2}, {"head_sha": "b" * 40},
+                       {"head_repository": {"id": 12, "full_name": "another/repo"}}):
+            with self.subTest(fields=fields), patch.dict(self.run, fields), self.assertRaises(ValueError):
+                self.fetch(self.branch)
+
+    def test_both_upload_ids_must_come_from_the_same_job_and_steps(self):
+        good = self.logs
+        for changed in (
+                good.replace(b"/artifacts/55", b"/artifacts/57"),
+                good.replace(b"/runs/11/", b"/runs/12/"),
+                good.replace(b"test (ubuntu-latest, 3.12)", b"test (ubuntu-latest, 3.10)", 1),
+                good.replace("保存 x64 安装验收报告".encode(), "其他上传步骤".encode()), good + good):
+            self.logs = changed
+            with self.subTest(log=changed), self.assertRaises(ValueError):
+                self.fetch(self.branch)
+        self.logs = good
+        self.job["steps"][-1]["conclusion"] = "skipped"
+        with self.assertRaises(ValueError):
+            self.fetch(self.branch)
+
+    def test_same_name_different_archive_and_false_sums_are_rejected(self):
+        for filename in self.dist:
+            with self.subTest(filename=filename), patch.dict(self.dist, {filename: b"other build"}), self.assertRaises(ValueError):
+                self.fetch(self.branch)
+        with patch.dict(self.report, {"schema_version": 1}), self.assertRaises(ValueError):
+            self.fetch(self.branch)
 
 
 class RecoveryEvidenceTests(unittest.TestCase):
