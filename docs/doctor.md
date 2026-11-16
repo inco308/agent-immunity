@@ -8,6 +8,20 @@
 python -m agent_immunity.doctor --policy examples/policy.json
 ```
 
+## 升级前核对新增工具和能力
+
+把已部署并验收的策略作为 `--baseline`，把准备上线的策略作为 `--policy`。在能访问两份策略所声明目录的环境中运行以下命令。检查器只读本地文件，两份策略各自按所在位置解析相对路径。
+
+```text
+agent-immunity-check --policy candidate.json --baseline deployed.json --json
+```
+
+例如，旧策略只允许工具 `notes` 读取文件，新策略为它增加写入能力时，报告会给出 `POLICY_CAPABILITIES_ADDED`，并在 `capabilities` 中列出 `write`。首次登记的工具会给出 `POLICY_TOOL_ADDED`，列出它声明的全部能力。只移除工具、撤回能力或调整声明顺序时，不会产生新增项。
+
+JSON 中的 `comparison.scope` 为 `added_tools_and_capabilities`。两份策略均加载成功时，`comparison.status` 为 `compared`。任一份加载失败时为 `not_compared`，对应诊断的 `policy_role` 为 `candidate` 或 `baseline`。可同时加上 `--catalog`，使用上游快照检查候选策略。基线文件有误时，已加载的候选策略仍接受常规检查。
+
+同一工具仍声明 `read`，却把可读目录从一个子目录扩大到整个工作区时，本项对比也可能通过。上线前还需核对目录、网络目标、执行参数白名单和状态约束，并用实际宿主验证允许和拒绝的操作。
+
 ## 升级后策略加载失败
 
 在发生问题的网关环境中运行 `agent-immunity-check --policy <策略文件> --json`，查看 `findings[].code`。策略的顶层字段 `version` 指定权限配置的格式，目前支持整数 `1`。体检报告的 `schema_version` 指定报告自身的格式。
@@ -34,7 +48,7 @@ python -m agent_immunity.doctor --policy examples/policy.json --catalog artifact
 | --- | --- | --- |
 | 0 | `pass` | 所选范围的检查通过。仅给策略时范围为 `policy`；提供目录后为 `policy_and_catalog`。 |
 | 1 | `error` | 修正无效输入、策略落在声明的可写根内、无法匹配的执行白名单条目、缺少登记工具或输入描述冲突。 |
-| 2 | `review` | 上游使用超出自动检查范围的 schema 约束。请审阅原始描述和实现，补真实调用测试。CLI 参数错误也遵循 argparse 的退出码 2。 |
+| 2 | `review` | 审阅新增工具、已有工具新增的能力，或上游超出自动检查范围的 schema 约束。有任何检查错误时优先返回 1。CLI 参数错误也遵循 argparse 的退出码 2。 |
 
 例如，上游接受 number 时，本地只公开 integer 属于合理收窄。上游明确禁止额外属性时，本地多公开一个字段会给出 `FIELD_NOT_ACCEPTED`。上游增加必填字段会给出 `REQUIRED_MISMATCH`。枚举、嵌套对象限制、引用或组合条件会给出 `SCHEMA_REVIEW`。上游另行公开但本地未登记的工具只计入 `hidden_tools`。有限规则检查的是**本地公开输入描述**与上游声明的关系，执行白名单的取值限制另行校验。
 
