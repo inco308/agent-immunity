@@ -35,10 +35,52 @@ jobs:
           --codex pilot/codex_time/node_modules/.bin/codex
           --environment artifacts/pilot-env/environment.json
           --output-dir artifacts/codex-time-lifecycle
+          --candidate-policy-template pilot/codex_time/policy.json
+      - name: 扩权候选等待审阅时复验原配置和业务
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=0
+          python -X utf8 -m pilot.codex_time.run \
+            --codex pilot/codex_time/node_modules/.bin/codex \
+            --environment artifacts/pilot-env/environment.json \
+            --output-dir artifacts/codex-time-policy-review \
+            --candidate-policy-template pilot/codex_time/expanded-policy.json || code=$?
+          test "$code" -eq 2
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          normal = json.loads(Path("artifacts/codex-time-lifecycle/report.json").read_bytes())
+          assert normal["status"] == "passed" and normal["policy_comparison"]["status"] == "pass"
+          assert [s["phase"] for s in normal["stages"]] == ["install", "upgrade", "rollback"]
+
+          root = Path("artifacts/codex-time-policy-review")
+          report = json.loads((root / "report.json").read_bytes())
+          assert report["status"] == report["policy_comparison"]["status"] == "review"
+          assert "POLICY_TOOL_ADDED" in report["policy_comparison"]["codes"]
+          assert [s["phase"] for s in report["stages"]] == ["install"]
+          installed, retained = report["stages"][0], report["retained"]
+          assert retained["phase"] == "retained"
+          assert retained["version"] == installed["version"] == "2025.8.4"
+          assert retained["visible_tools"] == ["convert_time"]
+          assert retained["weekday_field"] is False and retained["denial"] == "TRANSITION_DENIED"
+          config = (root / "host-project/.codex/config.toml").read_bytes()
+          assert hashlib.sha256(config).hexdigest() == installed["config_sha256"] == retained["config_sha256"]
+          assert (root / "policy.json").read_bytes() == Path("pilot/codex_time/policy.json").read_bytes()
+          PY
       - name: 保存阶段证据
         if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
           name: codex-time-lifecycle
           path: artifacts/codex-time-lifecycle/report.json
+          if-no-files-found: warn
+      - name: 保存候选策略审阅与原配置复验证据
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: codex-time-policy-review
+          path: artifacts/codex-time-policy-review/report.json
           if-no-files-found: warn
