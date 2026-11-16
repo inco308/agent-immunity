@@ -11,7 +11,8 @@ import subprocess
 import tempfile
 import zipfile
 
-from .package_protocol import PROTOCOL_STEP
+from .check_x64_install_report import validate as validate_x64_install
+from .package_protocol import PROTOCOL_STEP, validate_protocols
 
 
 REPOSITORY = "inco308/agent-immunity"
@@ -111,13 +112,13 @@ def _matches(record, fields):
     )
 
 
-def _verify_run(commit, run_id, workflow, *, dispatch=False):
+def _verify_run(commit, run_id, workflow, *, dispatch=False, branch="main"):
     run = _api(f"{RUNS_API}/{run_id}")
     required = {"id": run_id, "head_sha": commit, "event": "workflow_dispatch" if dispatch else "push",
                 "status": "completed", "conclusion": "success", "run_attempt": 1,
                 "path": f".github/workflows/{workflow}.yml"}
     if not dispatch:
-        required["head_branch"] = "main"
+        required["head_branch"] = branch
     repo = {"id": REPOSITORY_ID, "full_name": REPOSITORY}
     if (not _matches(run, required)
             or not all(_matches(run.get(key), repo) for key in ("repository", "head_repository"))):
@@ -280,6 +281,69 @@ def read_artifact_files(data, limits, *, exact=False):
     if files.keys() != limits.keys():
         raise ValueError("构建产物缺少所需文件")
     return files
+
+
+def validate_preview_checksums(data, report):
+    """对照已验证的报告逐行核对名称和摘要；兼容两种常用换行符及记录顺序。"""
+    expected = {p["filename"].encode("ascii"): p["sha256"].encode("ascii") for p in report["packages"]}
+    lines = data.replace(b"\r\n", b"\n").removesuffix(b"\n").split(b"\n")
+    for line in lines:
+        checksum, separator, name = line.partition(b"  ")
+        if not separator or expected.pop(name, None) != checksum.lower():
+            raise ValueError("SHA256SUMS 与同作业安装报告不一致")
+    if expected:
+        raise ValueError("SHA256SUMS 与同作业安装报告不一致")
+
+
+def _uploaded_id(logs, job, run_id, step):
+    # Actions 的产物 API 绑定到运行，具体作业与不可复用的产物 ID 由上传步骤日志提供。
+    prefix = f"{job['name']}\t{step}\t".encode()
+    url = f"{REPO_URL}/actions/runs/{run_id}/artifacts/".encode()
+    pattern = (rb"^" + re.escape(prefix) + rb"[^\s]+ Artifact download URL: " + re.escape(url)
+               + rb"([1-9][0-9]*)\r?$")
+    matches = re.findall(pattern, logs, re.MULTILINE)
+    if len(matches) != 1:
+        raise ValueError(f"缺少唯一的上传产物链接：{step}")
+    return int(matches[0])
+
+
+def fetch_preview_pair(commit, run_id, branch="main"):
+    """核对指定 push 的发布作业、两份产物及发行文件字节，返回已验证的安装报告。"""
+    if (not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit)
+            or type(run_id) is not int or run_id <= 0 or not isinstance(branch, str) or not branch.strip()):
+        raise ValueError("需指定完整提交 SHA、正整数运行编号和分支名")
+    _verify_run(commit, run_id, "ci", branch=branch)
+    jobs = [job for job in _jobs(commit, run_id) if job.get("name") == "test (ubuntu-latest, 3.12)"]
+    if len(jobs) != 1:
+        raise ValueError("需有唯一的 Ubuntu 3.12 预览包发布作业")
+    job = jobs[0]
+    receipt_name = package_artifact_name(job)
+    if receipt_name != "package-install-ubuntu-latest-py3.12":
+        raise ValueError("预览包发布作业缺少安装报告")
+    receipt_step, dist_step = "保存 x64 安装验收报告", "保存可下载的发行文件"
+    job_link(job, run_id, "ubuntu-latest", "构建源码分发包及其 wheel", "检查归档内容、独立安装和 SHA-256",
+             PROTOCOL_STEP, receipt_step, dist_step)
+    logs = _retry(lambda: _gh(["run", "view", str(run_id), "--repo", f"github.com/{REPOSITORY}",
+                               "--job", str(job["id"]), "--log"]))
+    receipt_id = _uploaded_id(logs, job, run_id, receipt_step)
+    dist_id = _uploaded_id(logs, job, run_id, dist_step)
+    if receipt_id == dist_id:
+        raise ValueError("预览包和安装报告的产物编号重复")
+    receipt = _download_artifact(commit, run_id, receipt_name, expected_id=receipt_id)
+    receipt_files = read_artifact_files(receipt["data"], {"package-install.json": 1024 * 1024}, exact=True)
+    report = json.loads(receipt_files["package-install.json"])
+    validate_protocols(report, require_protocol=True)
+    validate_x64_install(report, "ubuntu-latest", "3.12")
+    dist = _download_artifact(commit, run_id, "agent-immunity-dist", expected_id=dist_id)
+    hashes = {p["filename"]: p["sha256"] for p in report["packages"]}
+    limits = {name: ARCHIVE_LIMIT for name in hashes}
+    files = read_artifact_files(dist["data"], {**limits, "SHA256SUMS": 1024}, exact=True)
+    for name, expected in hashes.items():
+        if hashlib.sha256(files[name]).hexdigest() != expected:
+            raise ValueError(f"已发布归档与同作业安装报告的 SHA-256 不一致：{name}")
+    validate_preview_checksums(files["SHA256SUMS"], report)
+    _verify_run(commit, run_id, "ci", branch=branch)
+    return job, report, dist_id, receipt_id
 
 
 def _verify_wheel(receipt):
