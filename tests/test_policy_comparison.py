@@ -15,12 +15,17 @@ PRIVATE_TOOL = "removed_private_tool_713"
 PRIVATE_VALUE = "SYNTHETIC_PRIVATE_ARGUMENT_814"
 PRIVATE_URL = "https://private-comparison.example.invalid"
 PRIVATE_DIR = "private_docs_405"
-SCOPE = "added_tools_capabilities_and_file_roots"
+SCOPE = "added_tools_capabilities_file_roots_and_network_origins"
 
 
 def file_tool(*capabilities, roots=(".",)):
     return {"capabilities": list(capabilities), "parameters": {"path": "string"},
             "path_fields": ["path"], "roots": list(roots)}
+
+
+def network_tool(*origins, capabilities=("network",)):
+    return {"capabilities": list(capabilities), "parameters": {"url": "string"},
+            "url_fields": ["url"], "origins": list(origins)}
 
 
 class PolicyComparisonTests(unittest.TestCase):
@@ -52,7 +57,8 @@ class PolicyComparisonTests(unittest.TestCase):
             for target in ("socket.socket", "socket.getaddrinfo", "subprocess.Popen"):
                 stack.enter_context(patch(target, side_effect=AssertionError("策略对比必须离线运行")))
             code = main(args + list(extra))
-        for private in (PRIVATE_TOOL, PRIVATE_URL, PRIVATE_VALUE, PRIVATE_DIR, self.root.name):
+        for private in (PRIVATE_TOOL, PRIVATE_URL, PRIVATE_VALUE, PRIVATE_DIR, self.root.name,
+                        ".invalid", "192.0.2.17", "51029"):
             self.assertNotIn(private, stdout.getvalue() + stderr.getvalue())
         return code, json.loads(stdout.getvalue()) if as_json else stdout.getvalue()
 
@@ -168,6 +174,51 @@ class PolicyComparisonTests(unittest.TestCase):
             ("POLICY_CAPABILITIES_ADDED", "docs", ["write"]), ("POLICY_FILE_ROOTS_EXPANDED", "docs", ["read"]),
             ("POLICY_CAPABILITIES_ADDED", "worker", ["read"]), ("POLICY_TOOL_ADDED", "new", ["write"]),
         ])
+
+    def test_network_comparison_uses_runtime_origin_identity(self):
+        ip = "https://192.0.2.17"
+        host = "https://bücher.example.invalid"
+        for old, new, expanded in (
+            ([host], [host, ip, PRIVATE_URL], True),
+            ([host], [ip], True),
+            ([ip], ["http://192.0.2.17:443"], True),
+            ([ip], [ip + ":51029"], True),
+            ([host, ip], [host], False),
+            ([host, ip], [ip, "https://XN--BCHER-KVA.EXAMPLE.INVALID:443/"], False),
+        ):
+            with self.subTest(old=old, new=new):
+                self.write_policy(self.baseline, {"fetch": network_tool(*old)})
+                self.write_policy(self.candidate, {"fetch": network_tool(*new)})
+                code, report = self.invoke()
+                self.assertEqual((code, report["status"]), (2, "review") if expanded else (0, "pass"))
+                self.assertEqual([(f["code"], f["tool"], f["capabilities"], f["severity"]) for f in report["findings"]],
+                                 [("POLICY_NETWORK_ORIGINS_EXPANDED", "fetch", ["network"], "review")] if expanded else [])
+                if expanded:
+                    code, output = self.invoke(as_json=False)
+                    self.assertEqual(code, 2)
+                    self.assertIn("POLICY_NETWORK_ORIGINS_EXPANDED", output)
+
+    def test_only_retained_network_capability_gets_an_origin_finding(self):
+        ip = "https://192.0.2.17:51029"
+        self.write_policy(self.baseline, {
+            "fetch": network_tool(PRIVATE_URL), "worker": {"capabilities": ["compute"]},
+            "parse": network_tool(PRIVATE_URL, capabilities=("compute",)),
+        })
+        self.write_policy(self.candidate, {
+            "fetch": network_tool(ip), "worker": network_tool(ip, capabilities=("compute", "network")),
+            "new": network_tool(ip), "parse": network_tool(ip, capabilities=("compute",)),
+        })
+        catalog = self.root / "catalog.json"
+        catalog.write_text('{"tools":[]}', encoding="utf-8")
+        code, report = self.invoke("--catalog", str(catalog))
+        self.assertEqual((code, report["status"]), (1, "error"))
+        self.assertCountEqual([(f["code"], f["tool"], f["capabilities"]) for f in report["findings"]
+                               if f["severity"] == "review"], [
+            ("POLICY_NETWORK_ORIGINS_EXPANDED", "fetch", ["network"]),
+            ("POLICY_CAPABILITIES_ADDED", "worker", ["network"]),
+            ("POLICY_TOOL_ADDED", "new", ["network"]),
+        ])
+        self.assertIn("TOOL_MISSING", [f["code"] for f in report["findings"]])
 
     def test_unreadable_or_unsupported_policy_identifies_its_role_without_partial_diff(self):
         malformed = b'{"tools":'

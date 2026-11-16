@@ -8,7 +8,7 @@
 python -m agent_immunity.doctor --policy examples/policy.json
 ```
 
-## 升级前核对新增工具、能力和目录授权
+## 升级前核对新增工具、能力、目录和网络目标
 
 从可信的部署记录取得已验收的策略作为 `--baseline`，把准备上线的策略作为 `--policy`。在能访问两份策略所声明目录的宿主上运行以下命令。检查器只读本地文件，分别以各策略文件的位置解析其工作区，再以工作区解析工具的目录。
 
@@ -20,9 +20,13 @@ agent-immunity-check --policy candidate.json --baseline deployed.json --json
 
 如果 `notes` 在两份策略中都保留 `read`，可读范围却从 `reports/daily` 扩大到 `reports`，检查器会给出 `POLICY_FILE_ROOTS_EXPANDED`。对每个这样的工具，报告只给出一条目录诊断，`capabilities` 列出两份策略共同声明的读写能力，具体路径留在本地策略文件中。把授权换到旧范围以外的同级目录也会触发。反向收窄到子目录，或添加已被旧根目录覆盖的子目录，均不会触发目录诊断。
 
-比较依据是检查时宿主解析出的实际目录。迁移工作区后，即使两份策略里的相对路径相同，也可能指向旧范围以外的目录。若符号链接在部署后被改指，仅凭旧策略文件无法还原它当时指向的位置。上线前还需核对网络目标、路径参数、执行参数白名单和状态约束，并用实际宿主验证允许和拒绝的操作。
+比较依据是检查时宿主解析出的实际目录。迁移工作区后，即使两份策略里的相对路径相同，也可能指向旧范围以外的目录。若符号链接在部署后被改指，仅凭旧策略文件无法还原它当时指向的位置。
 
-JSON 中的 `comparison.scope` 为 `added_tools_capabilities_and_file_roots`。两份策略均加载成功时，`comparison.status` 为 `compared`。任一份加载失败时为 `not_compared`，对应诊断的 `policy_role` 为 `candidate` 或 `baseline`。可同时加上 `--catalog`，使用上游快照检查候选策略。基线文件有误时，已加载的候选策略仍接受常规检查。
+已有工具在两份策略中都保留 `network` 时，检查器按协议、经 IDNA 规范化的小写主机名和有效端口比较 `origins`。例如，旧策略只允许 `https://api.example.invalid`，候选策略新增同一主机的 8443 端口，就会给出 `POLICY_NETWORK_ORIGINS_EXPANDED`。每个受影响的工具只产生一条网络诊断，`capabilities` 为 `["network"]`，具体目标留在本地策略中。仅显式写出 HTTPS 默认端口 443、调整目标顺序或删除目标时，均不会触发这条诊断。
+
+离线对比只使用策略声明的目标。DNS 解析结果、HTTP 重定向和上游实际发出的请求需在部署环境中验证。上线前还需核对 URL 和路径参数、执行参数白名单及状态约束，并用实际宿主验证允许和拒绝的操作。
+
+JSON 中的 `comparison.scope` 为 `added_tools_capabilities_file_roots_and_network_origins`。两份策略均加载成功时，`comparison.status` 为 `compared`。任一份加载失败时为 `not_compared`，对应诊断的 `policy_role` 为 `candidate` 或 `baseline`。可同时加上 `--catalog`，使用上游快照检查候选策略。基线文件有误时，已加载的候选策略仍接受常规检查。
 
 ## 升级后策略加载失败
 
@@ -50,7 +54,7 @@ python -m agent_immunity.doctor --policy examples/policy.json --catalog artifact
 | --- | --- | --- |
 | 0 | `pass` | 所选范围的检查通过。仅给策略时范围为 `policy`；提供目录后为 `policy_and_catalog`。 |
 | 1 | `error` | 修正无效输入、策略落在声明的可写根内、无法匹配的执行白名单条目、缺少登记工具或输入描述冲突。 |
-| 2 | `review` | 审阅新增工具、已有工具新增的能力或扩大的读写目录范围，以及上游超出自动检查范围的 schema 约束。有任何检查错误时优先返回 1。CLI 参数错误也遵循 argparse 的退出码 2。 |
+| 2 | `review` | 审阅新增工具、能力、读写目录范围或网络目标，以及上游超出自动检查范围的 schema 约束。有任何检查错误时优先返回 1。CLI 参数错误也遵循 argparse 的退出码 2。 |
 
 例如，上游接受 number 时，本地只公开 integer 属于合理收窄。上游明确禁止额外属性时，本地多公开一个字段会给出 `FIELD_NOT_ACCEPTED`。上游增加必填字段会给出 `REQUIRED_MISMATCH`。枚举、嵌套对象限制、引用或组合条件会给出 `SCHEMA_REVIEW`。上游另行公开但本地未登记的工具只计入 `hidden_tools`。有限规则检查的是**本地公开输入描述**与上游声明的关系，执行白名单的取值限制另行校验。
 
