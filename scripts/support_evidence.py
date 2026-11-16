@@ -232,8 +232,8 @@ def fetch_evidence(commit, verify_run, pilot_run):
     return verify_jobs, interop, pilot_jobs["lifecycle"], pilot, native_pilots
 
 
-def _artifact_files(commit, run_id, name, limits, *, expected_id=None):
-    """按不可复用的产物编号下载，校验 GitHub 摘要后只读所需成员。"""
+def _download_artifact(commit, run_id, name, *, expected_id=None):
+    """按不可复用的产物编号下载，并与 GitHub 的归档摘要核对。"""
     payload = _api(f"{RUNS_API}/{run_id}/artifacts?name={name}&per_page=100")
     if (not _matches(payload, {"total_count": 1}) or not isinstance(payload.get("artifacts"), list)
             or len(payload["artifacts"]) != 1):
@@ -248,22 +248,32 @@ def _artifact_files(commit, run_id, name, limits, *, expected_id=None):
             or type(size) is not int or not 0 < size <= ARCHIVE_LIMIT):
         raise ValueError("构建产物编号与收据不一致或归档大小无效")
     data = _retry(lambda: _gh(["api", "--hostname", "github.com", f"repos/{REPOSITORY}/actions/artifacts/{number}/zip"]))
-    if len(data) != size or item.get("digest") != "sha256:" + hashlib.sha256(data).hexdigest():
+    checksum = hashlib.sha256(data).hexdigest()
+    if len(data) != size or item.get("digest") != "sha256:" + checksum:
         raise ValueError("下载的产物归档与 GitHub 元数据不符")
+    return {"id": number, "sha256": checksum, "data": data}
+
+
+def read_artifact_files(data, limits, *, exact=False):
+    """按各成员长度上限读取 ZIP；留存包可要求成员集合完全匹配。"""
     files = {}
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             for member in archive.infolist():
-                if member.filename in limits:
-                    if (member.filename in files or stat.S_ISLNK(member.external_attr >> 16)
-                            or member.file_size > limits[member.filename]):
-                        raise ValueError("归档成员重复、是符号链接或长度超限")
-                    files[member.filename] = archive.read(member)
+                if member.filename not in limits:
+                    if exact:
+                        raise ValueError("归档包含额外成员")
+                    continue
+                if (member.filename in files or member.is_dir()
+                        or stat.S_IFMT(member.external_attr >> 16) not in (0, stat.S_IFREG)
+                        or member.file_size > limits[member.filename]):
+                    raise ValueError("归档成员重复、不是常规文件或长度超限")
+                files[member.filename] = archive.read(member)
     except (zipfile.BadZipFile, RuntimeError) as exc:
         raise ValueError("无法读取构建产物归档") from exc
     if files.keys() != limits.keys():
         raise ValueError("构建产物缺少所需文件")
-    return number, files
+    return files
 
 
 def _verify_wheel(receipt):
@@ -273,14 +283,16 @@ def _verify_wheel(receipt):
         raise ValueError("网关构建收据无效")
     _verify_run(commit, run_id, "ci")
     wheel = f"agent_immunity-{version(receipt['version'])}-py3-none-any.whl"
-    _, files = _artifact_files(commit, run_id, "agent-immunity-dist", {wheel: ARCHIVE_LIMIT}, expected_id=number)
+    archive = _download_artifact(commit, run_id, "agent-immunity-dist", expected_id=number)
+    files = read_artifact_files(archive["data"], {wheel: ARCHIVE_LIMIT})
     if hashlib.sha256(files[wheel]).hexdigest() != receipt["wheel_sha256"]:
         raise ValueError("来源构建中的 wheel 字节与恢复报告的摘要不符")
     _verify_run(commit, run_id, "ci")
+    return archive
 
 
-def fetch_recovery_evidence(recovery_commit, recovery_run):
-    """绑定指定分支提交的双构建手动演练、退出证据和两个 main 来源。"""
+def fetch_recovery_evidence(recovery_commit, recovery_run, *, archives=None):
+    """核对双构建演练及两个 main 来源；可在全部核验完成后取回三份原始归档。"""
     if (not isinstance(recovery_commit, str) or not re.fullmatch(r"[0-9a-f]{40}", recovery_commit)
             or type(recovery_run) is not int or recovery_run <= 0):
         raise ValueError("需要恢复演练的完整提交 SHA 和正整数运行编号")
@@ -295,20 +307,25 @@ def fetch_recovery_evidence(recovery_commit, recovery_run):
         job_link(job, recovery_run, "ubuntu-24.04", *RECOVERY_STEPS)
     except (KeyError, TypeError) as exc:
         raise ValueError("恢复演练作业缺少有效的步骤") from exc
-    artifact, files = _artifact_files(recovery_commit, recovery_run, RECOVERY_ARTIFACT,
-                                      {"report.json": 1024 * 1024, "candidate-exit.txt": 3})
+    recovery = _download_artifact(recovery_commit, recovery_run, RECOVERY_ARTIFACT)
+    files = read_artifact_files(recovery["data"], {"report.json": 1024 * 1024, "candidate-exit.txt": 3})
     if files["candidate-exit.txt"] not in (b"1\n", b"1\r\n"):
         raise ValueError("候选网关实际退出码与缺失上游的验收不符")
     report = json.loads(files["report.json"])
     if not _matches(report, {"schema_version": 2, "gateway_mode": "verified_previews"}):
         raise ValueError("恢复记录需要两份已核验的网关构建")
+    retained = {"recovery": recovery} if archives is not None else None
     try:
         previous, candidate = (report["upstreams"][slot]["gateway"] for slot in ("previous", "candidate"))
         if any(previous[k] == candidate[k] for k in ("commit", "run_id", "artifact_id", "wheel_sha256")):
             raise ValueError("恢复记录没有使用两个独立构建")
-        for receipt in (previous, candidate):
-            _verify_wheel(receipt)
+        for slot, receipt in (("previous", previous), ("candidate", candidate)):
+            archive = _verify_wheel(receipt)
+            if retained is not None:
+                retained[slot] = archive
     except (TypeError, KeyError) as exc:
         raise ValueError("恢复报告的网关来源收据不完整") from exc
     _verify_run(recovery_commit, recovery_run, "codex-time-pilot", dispatch=True)
-    return job, report, artifact
+    if archives is not None:
+        archives.update(retained)
+    return job, report, recovery["id"]
