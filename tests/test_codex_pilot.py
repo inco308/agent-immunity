@@ -6,10 +6,12 @@ import io
 import json
 from pathlib import Path
 import re
+from subprocess import CompletedProcess
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
+from agent_immunity import doctor
 from pilot.codex_time import host, run as pilot
 from tests.support import temporary_directory
 
@@ -54,11 +56,21 @@ class CodexPilotLifecycleTests(unittest.TestCase):
         self.command = stack.enter_context(patch.object(pilot, "run_command", side_effect=self.mock_command))
         self.host = stack.enter_context(patch.object(pilot, "host_stage", side_effect=self.inspect_active_config))
 
-    def mock_preflight(self, environment, slot, output, policy):
+    def mock_preflight(self, environment, slot, output, policy, *, catalog_only=False):
         self.assertEqual(environment[slot], self.environment[slot])
-        self.assertEqual((output, policy), (self.output, self.policy_path))
+        self.assertEqual(output, self.output)
+        if not catalog_only:
+            self.assertEqual(policy, self.policy_path)
+            catalog_hash = checksum(slot.encode())
+        else:
+            self.assertEqual(slot, "candidate")
+            catalog = {"tools": [{"name": name, "inputSchema": {"type": "object"}}
+                                 for name in ("convert_time", "get_current_time")]}
+            snapshot = json.dumps(catalog).encode()
+            (output / "candidate-tools.json").write_bytes(snapshot)
+            catalog_hash = checksum(snapshot)
         return {"installed_version": pilot.VERSIONS[slot], "raw_tools": ["convert_time", "get_current_time"],
-                "policy_check": "pass", "catalog_sha256": checksum(slot.encode())}
+                "catalog_sha256": catalog_hash}
 
     def mock_command(self, argv, cwd):
         if argv[1:] == ["--version"]:
@@ -104,10 +116,13 @@ class CodexPilotLifecycleTests(unittest.TestCase):
                                    "--no-daemon", "app-server", "--listen", "stdio://"])
         slot, other = ("candidate", "previous") if expect_weekday else ("previous", "candidate")
         # 在每次宿主验收时读取活动文件，核对它指向本次策略和正确的上游。
-        for value in (self.environment["gateway"], self.environment[slot], str(self.policy_path)):
+        policy_path = self.policy_path
+        if expect_weekday and getattr(self.args, "candidate_policy_template", None):
+            policy_path = self.output / "candidate-policy.json"
+        for value in (self.environment["gateway"], self.environment[slot], str(policy_path)):
             self.assertIn(json.dumps(value, ensure_ascii=False).encode("utf-8"), config)
         self.assertNotIn(json.dumps(self.environment[other], ensure_ascii=False).encode("utf-8"), config)
-        self.observations.append((slot, config, checksum(self.policy_path.read_bytes())))
+        self.observations.append((slot, config, checksum(policy_path.read_bytes())))
         if expect_weekday:
             if self.failure == "runtime_error":
                 raise RuntimeError("合成候选版本未通过宿主验收")
@@ -123,6 +138,83 @@ class CodexPilotLifecycleTests(unittest.TestCase):
 
     def read_report(self):
         return json.loads(self.report_path.read_text(encoding="utf-8"))
+
+    def check_candidate_template(self, data, expected_code):
+        template = self.output.parent / "input-template.json"
+        template.write_bytes(data)
+        self.args.candidate_policy_template = template
+        baseline = (pilot.HERE / "policy.json").read_bytes()
+        candidate = self.output / "candidate-policy.json"
+
+        def installed_doctor(argv, **_options):
+            self.assertEqual(argv[:4], [self.environment["gateway"], "-I", "-m", "agent_immunity.doctor"])
+            options = argv[4:]
+            self.assertEqual(Path(options[options.index("--policy") + 1]), candidate)
+            self.assertEqual(Path(options[options.index("--baseline") + 1]), self.policy_path)
+            self.assertEqual(Path(options[options.index("--catalog") + 1]), self.output / "candidate-tools.json")
+            self.assertIn("--json", options)
+            self.assertEqual(candidate.read_bytes(), data)
+            self.assertEqual(self.policy_path.read_bytes(), baseline)
+            if not self.args.preflight_only:
+                self.assertEqual([slot for slot, _, _ in self.observations], ["previous"])
+                self.assertEqual(self.active.read_bytes(), self.observations[0][1])
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                code = doctor.main(options)
+            return CompletedProcess(argv, code, stdout.getvalue(), "")
+
+        with patch.object(pilot.subprocess, "run", side_effect=installed_doctor) as doctor_call, \
+                patch.object(pilot, "atomic_write", wraps=pilot.atomic_write) as writes:
+            self.assertEqual(self.run_trial(), expected_code)
+        doctor_call.assert_called_once()
+        self.assertEqual(template.read_bytes(), data)
+        self.assertEqual(self.policy_path.read_bytes(), baseline)
+        report = self.read_report()
+        self.assertEqual(report["policy_comparison"]["candidate_policy_sha256"], checksum(data))
+        self.assertEqual(report["policy_comparison"]["baseline_policy_sha256"], checksum(baseline))
+        return report, [call.args[1] for call in writes.call_args_list if call.args[0] == self.active]
+
+    def test_installed_candidate_with_reformatted_policy_rolls_back_to_original_policy(self):
+        data = json.dumps(json.loads((pilot.HERE / "policy.json").read_bytes())).encode()
+        report, writes = self.check_candidate_template(data, 0)
+        self.assertEqual((report["status"], report["policy_comparison"]["status"]), ("passed", "pass"))
+        original = self.observations[0][1]
+        self.assertEqual(writes, [original, self.observations[1][1], original])
+        self.assertEqual([slot for slot, _, _ in self.observations], ["previous", "candidate", "previous"])
+        self.assertEqual(self.active.read_bytes(), original)
+        self.assertEqual(self.observations[1][2], checksum(data))
+
+    def check_held_candidate(self, data, code, status, finding):
+        report, writes = self.check_candidate_template(data, code)
+        self.assertEqual(report["status"], "review" if code == 2 else "failed")
+        self.assertEqual(report["policy_comparison"]["status"], status)
+        self.assertIn(finding, report["policy_comparison"]["codes"])
+        self.assertEqual([entry["phase"] for entry in report["stages"]], ["install"])
+        self.assertEqual([slot for slot, _, _ in self.observations], ["previous", "previous"])
+        original = self.observations[0][1]
+        self.assertEqual(writes, [original])
+        self.assertEqual(self.observations[0], self.observations[1])
+        self.assertEqual(self.active.read_bytes(), original)
+        self.assertEqual(report["retained"]["config_sha256"], checksum(original))
+        self.assertEqual(report["retained"]["version"], pilot.VERSIONS["previous"])
+
+    def test_new_registered_tool_holds_candidate_and_rechecks_existing_host(self):
+        policy = json.loads((pilot.HERE / "policy.json").read_bytes())
+        policy["tools"]["get_current_time"] = {"capabilities": ["compute"]}
+        self.check_held_candidate(json.dumps(policy).encode(), 2, "review", "POLICY_TOOL_ADDED")
+
+    def test_invalid_candidate_retains_original_and_returns_error(self):
+        self.check_held_candidate(b'{"version":2}', 1, "error", "POLICY_VERSION_UNSUPPORTED")
+
+    def test_preflight_only_reports_review_without_starting_or_claiming_host_recheck(self):
+        self.args.preflight_only = True
+        policy = json.loads((pilot.HERE / "policy.json").read_bytes())
+        policy["tools"]["get_current_time"] = {"capabilities": ["compute"]}
+        report, writes = self.check_candidate_template(json.dumps(policy).encode(), 2)
+        self.assertEqual((report["status"], report["stages"], writes), ("review", [], []))
+        self.assertNotIn("retained", report)
+        self.host.assert_not_called()
+        self.assertFalse(self.active.exists())
 
     def check_candidate_failure(self, failure):
         self.failure = failure

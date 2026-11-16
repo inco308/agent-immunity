@@ -35,6 +35,26 @@ Windows 的 `--codex` 可指向相同版本的 `codex.exe`。每次演练使用�
 
 运行完成后，`report.json` 含各阶段版本、工具名、UTC/东京转换结果、星期字段是否存在、拒绝码、配置摘要和耗时。初始与回退的配置摘要应一致，升级摘要应与它们不同。任一阶段发生异常时，运行器记录 `failed` 和失败类型，恢复最近通过验收的项目配置，并返回非零。如果首次验收就失败，则移除本次尚未通过验收的配置；若恢复本身失败，报告另记 `rollback_error_type`。文件恢复后仍要重新连接进行业务验收。
 
+## 升级前审阅候选策略
+
+若升级也会更换策略，将候选模板传给同一演练入口。下面的样例为现有时区服务额外登记了 `get_current_time`。在准备好上述环境后运行：
+
+```bash
+python -X utf8 -m pilot.codex_time.run --codex pilot/codex_time/node_modules/.bin/codex --environment artifacts/pilot-env/environment.json --output-dir artifacts/time-pilot-review --candidate-policy-template pilot/codex_time/expanded-policy.json
+```
+
+运行器把模板复制为本次输出目录下的 `candidate-policy.json`。相对工作区以这份副本所在目录为基准，旧策略和候选策略可以指向同一个演练工作区。完整演练先安装并验证旧版，再用已安装的检查器比较两份策略和已采集的候选上游目录。
+
+| 退出码 | 实际行为 |
+| --- | --- |
+| 0 | 比较通过。宿主切换到已检查的候选策略副本和新版上游，完成业务验收，再回退到原配置。可用原 `policy.json` 作候选模板复现。 |
+| 2 | 检查器要求审阅。宿主继续使用原注册，重新连接旧版并验证一次允许调用和一次预期拒绝。样例的诊断为 `POLICY_TOOL_ADDED`。 |
+| 1 | 检查或业务验收发生错误。查看失败报告。若候选检查器正常返回策略错误，完整演练也会复验旧配置。 |
+
+在 `report.json` 中查看 `policy_comparison` 的诊断码和两份策略的摘要。等待审阅时，`stages` 只有已完成的安装；`retained` 记录旧配置的实际回读、业务结果和拒绝码。重新连接失败时，整轮报告失败。加 `--preflight-only` 可单独检查策略和目录，此模式下没有宿主复验证据。
+
+这里暂停的是宿主注册切换。采集候选目录会启动指定的第三方上游，应在隔离环境中使用受信的安装包。策略比较覆盖新增工具、声明能力、读写目录和允许的网络目标；参数白名单及状态约束变化仍需单独审阅。[策略比较范围](doctor.md)
+
 ## 在平时使用的编码宿主中接入
 
 在自己的受信项目里，先确认演练配置中的绝对路径与本机安装一致。若项目尚无 `time_pilot` 登记，将演练生成的 `mcp_servers.time_pilot` 赋值放到项目 `.codex/config.toml` 文件开头、首个 TOML 表头之前。若项目已有同名登记，先保存原配置，再更新该项的 `command` 和 `args`。打开工作区，在 Codex 的 MCP 工具列表确认 `time_pilot.convert_time` 可用，用同一时区转换例子验证返回值。升级后重新连接，回退时恢复旧配置和上一版本的已验证虚拟环境。[Codex MCP 配置说明](https://developers.openai.com/codex/mcp/)
