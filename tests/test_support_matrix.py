@@ -3,6 +3,7 @@ from copy import deepcopy
 import unittest
 
 from scripts.support_matrix import render_matrix
+from scripts.support_evidence import RECOVERY_CHECK_STEP
 
 
 COMMIT = "1a" * 20
@@ -165,6 +166,24 @@ class SupportMatrixTests(unittest.TestCase):
                         self.assertIn(expected, row)
                     for python in env["pythons"].values():
                         self.assertIn(python["version"], row)
+
+    def test_normal_lifecycle_can_use_candidate_policy_comparison(self):
+        old = self.render()
+        del self.pilot["upstreams"]["candidate"]["policy_check"]
+        comparison = {"status": "pass", "codes": [], "baseline_policy_sha256": self.pilot["policy_sha256"],
+                      "candidate_policy_sha256": "7" * 64}
+        self.pilot["policy_comparison"] = comparison
+        self.assertEqual(self.render(), old)
+        self.pilot_job["steps"].append({"name": RECOVERY_CHECK_STEP, "status": "completed", "conclusion": "success"})
+        with self.assertRaises(ValueError):
+            self.render()
+        for stage in self.pilot["stages"]:
+            stage["policy_sha256"] = comparison["candidate_policy_sha256"] if stage["phase"] == "upgrade" else self.pilot["policy_sha256"]
+        comparison["candidate_runtime_check"] = "pass"
+        self.assertEqual(self.render(), old)
+        self.pilot["stages"][-1]["policy_sha256"] = comparison["candidate_policy_sha256"]
+        with self.assertRaises(ValueError):
+            self.render()
 
     def test_job_label_report_and_native_gate_must_agree(self):
         mac, mac_report = native_pilot("macos-arm64")

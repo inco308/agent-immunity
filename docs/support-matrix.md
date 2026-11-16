@@ -16,6 +16,16 @@
 | Inspector 互操作 | `windows-latest` · Python 3.12.10 · Node 24.22.1 | Inspector 2.14.0 · Python SDK 1.30.0 | MCP 2025-06-18 握手、文件读写和回环 HTTP 发布 | [作业记录](https://github.com/inco308/agent-immunity/actions/runs/43694645291/job/132752387752) |
 | 编码宿主试点 | `ubuntu-24.04` | Codex CLI 0.167.0-alpha.3.2 · Python SDK 1.30.0 | mcp-server-time 2025.8.4 → 2025.9.25 → 2025.8.4，三阶段时区转换与重复调用拒绝 | [作业记录](https://github.com/inco308/agent-immunity/actions/runs/43694645271/job/132752387413) |
 
+## 双构建故障恢复演练
+
+演练提交 [`895c07a`](https://github.com/inco308/agent-immunity/commit/895c07a4f9763822ce1810dceed5ba4b40fb49e4)。网关按各自的 wheel SHA-256 前缀标识。
+
+| CI 环境与宿主 | 网关构建 | 已执行的故障与恢复验收 | 证据 |
+| --- | --- | --- | --- |
+| `ubuntu-24.04` · Codex CLI 0.167.0-alpha.3.2 · MCP Python SDK 1.30.0 | 原 [0.3.0a1 · `350a623558e1`](https://github.com/inco308/agent-immunity/actions/runs/43693563690/artifacts/14153586472)（提交 `8568e98`） → 候选 [0.3.0a1 · `b44de0a50ae7`](https://github.com/inco308/agent-immunity/actions/runs/43694645291/artifacts/14153623428)（提交 `7328ca6`） → 原构建 | mcp-server-time 从 2025.8.4 升级到 2025.9.25 时上游程序缺失，候选网关退出 1。恢复 2025.8.4 后完成时区转换并拒绝重复调用 | [作业记录](https://github.com/inco308/agent-immunity/actions/runs/43823960415/job/133153250640) · [恢复报告](https://github.com/inco308/agent-immunity/actions/runs/43823960415/artifacts/14206370054) |
+
+本次恢复演练由指定试点提交手动运行。两个网关包版本号相同，发行元数据不同。恢复时重开 Codex 会话，核对原网关、原策略及宿主注册，并将 UTC 09:00 转换为东京 18:00。表中的运行器和故障类型限定了这条证据的适用范围。
+
 ## 如何解读环境
 
 - 核心包的四项作业分别验收了 wheel 和源码包。2026-11-15 的 `ubuntu-latest` 实际为 Ubuntu 26.04.1 x64，使用 CPython 3.10.22、3.12.16。`windows-latest` 实际为 Windows Server 2025 x64，使用 CPython 3.10.11、3.12.10。作业标签会随托管环境更新。[核心与互操作工作流](https://github.com/inco308/agent-immunity/actions/runs/43694645291)
@@ -33,6 +43,16 @@ python -X utf8 -m scripts.support_matrix --commit 7328ca6949dcade4bbf186c827c3ee
 ```
 
 更新快照时，选择同一完整 `main` 提交的 `verify` 和 `codex-time-pilot` 两次 push 运行。生成器核对仓库、提交、工作流、作业及关键步骤，再读取两个平台的 Inspector 报告和 Codex 三阶段报告。产物只绑定运行编号，因而生成器要求两次运行都在首次尝试成功。预检、未完成的回退或过期缺失的报告会使命令返回非零。表下方的系统镜像、架构和补丁版本来自原作业日志，更新快照时也应重新核对。[生成器](../scripts/support_matrix.py)
+
+### 重建双构建恢复附表
+
+同时指定演练提交与运行编号，可在原矩阵后生成上面的恢复记录。下面的命令从 GitHub Actions 取证，需要可读取产物的 GitHub CLI 登录。
+
+```bash
+python -m scripts.support_matrix --commit 7328ca6949dcade4bbf186c827c3eee9c39fab4e --verify-run 43694645291 --pilot-run 43694645271 --recovery-commit 895c07a4f9763822ce1810dceed5ba4b40fb49e4 --recovery-run 43823960415
+```
+
+生成器从指定的首次成功手动运行读取报告和候选进程退出码，核对作业步骤、归档摘要及两份来自 `main` 构建的 wheel。候选 wheel 的来源提交、打包运行编号和版本须匹配主矩阵。缺少产物或校验失败时，命令返回非零。重新取证受三个产物各自的保留期限约束。
 
 ### 核对核心包的安装环境
 
