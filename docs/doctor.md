@@ -27,6 +27,27 @@ python -m agent_immunity.doctor --policy examples/policy.json --catalog artifact
 
 报告含本地登记的工具名、字段名和固定诊断码。它不包含参数实值、完整命令或整份目录。通过检查后仍需要验证工具实际使用哪些文件、地址或子进程，以及运行账户能做什么。采集完到实际调用之间的上游变化，需要在升级时重新检查。
 
+## 复核 wheel 和源码包的安装环境
+
+在仓库根目录运行下面两条命令。构建需要 Python 的 `build` 前端和项目声明的构建后端。请使用仅包含本次发行文件的输出目录。
+
+```text
+python -m build --outdir artifacts/core-dist
+python -X utf8 scripts/check_dist.py artifacts/core-dist --report artifacts/package-install.json
+```
+
+脚本在仓库外创建两个虚拟环境，分别安装 wheel 和源码包，核对网关模块与发行元数据的导入位置和版本，再运行策略体检、基准，并用已安装的代理与本地示例上游完成 MCP 握手、工具发现和 `ping`。两个环境均通过后，脚本将 `SHA256SUMS` 写入发行目录，并将 JSON 报告写到 `--report` 指定的外部路径。两条记录分别给出归档名、SHA-256、安装版本，以及该环境中实际运行的 Python、系统版本、架构和初始化响应中的 `protocol_version`。请同时核对本次命令的退出码，失败时原有报告会保留。
+
+查看 macOS CI 时，在对应的 `test (macos-15, 3.10)` 或 `test (macos-15, 3.12)` 作业中检查实际环境。每个作业还保存一份 `package-install-macos-15-py<系列>` 报告。验收范围是 Apple Silicon 上的核心包安装和启动，编码宿主互操作有单独的试点。
+
+Ubuntu 和 Windows 的 x64 打包作业分别上传 `package-install-ubuntu-latest-py<系列>`、`package-install-windows-latest-py<系列>`，系列为 `3.10` 或 `3.12`。下载对应产物并解压后，可在仓库根目录用下面的命令核对其中的报告。Windows 作业使用 `--runner windows-latest`，`--python-series` 取作业名称中的系列。
+
+```text
+python -X utf8 -m scripts.check_x64_install_report artifacts/package-install.json --runner ubuntu-latest --python-series 3.12
+```
+
+核对成功时会打印 wheel 与源码包各自的实测环境。Ubuntu 的 `distro_version` 取自发行版的 os-release，`os_version` 记录 Linux 内核版本。Windows 的 `os_version` 记录系统内部版本。每份记录还给出解释器的构建平台 `python_platform` 和实际指针位宽 `pointer_bits`。可按包名和完整 SHA-256 将安装记录与本次构建的归档逐一对应。
+
 ## 获取开发者预览包
 
 在对应提交的 GitHub Actions `verify` 页面下载 `agent-immunity-dist` 并解压。在该目录用 `sha256sum -c SHA256SUMS`，或在 PowerShell 中用 `Get-FileHash -Algorithm SHA256` 核对 wheel 与源码包摘要。在新的虚拟环境执行以下命令即可试用本轮版本。

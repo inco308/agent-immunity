@@ -4,6 +4,11 @@ import json
 from pathlib import Path
 import re
 
+if __package__:
+    from .package_protocol import validate_protocols
+else:
+    from package_protocol import validate_protocols
+
 
 TARGETS = {
     "ubuntu-latest": ("Linux", "x86_64", "linux-x86_64"),
@@ -19,10 +24,7 @@ def validate(report, runner, series):
     """以各自的 venv 为单位核对，不从第一条记录推断另一份包的环境。"""
     if not isinstance(runner, str) or runner not in TARGETS or not matches(series, r"[0-9]+\.[0-9]+"):
         raise ValueError("需要 Ubuntu 或 Windows 的 x64 打包作业和 Python 系列")
-    if (not isinstance(report, dict) or type(report.get("schema_version")) is not int
-            or report["schema_version"] != 1 or report.get("scope") != "CORE_PACKAGE_INSTALL"
-            or report.get("status") != "passed"):
-        raise ValueError("需要成功的核心包安装报告")
+    validate_protocols(report)
     packages = report.get("packages")
     if not isinstance(packages, list) or len(packages) != 2 or not all(isinstance(p, dict) for p in packages):
         raise ValueError("报告须包含 wheel 和源码包的两次安装")

@@ -4,6 +4,7 @@ import re
 import sys
 
 from .check_x64_install_report import validate as validate_x64_install
+from .package_protocol import PROTOCOL_STEP, validate_protocols
 from .recovery_matrix import render_recovery
 from .support_evidence import (
     NATIVE_TARGETS, PACKAGE_JOB, PLATFORMS, RECOVERY_CHECK_STEP, REPO_URL, by_name, fetch_evidence,
@@ -13,7 +14,7 @@ from .support_evidence import (
 
 def mac_package_details(report, series, gateway):
     """分别校验两个安装环境，只在实际观测值相同时合并显示。"""
-    if (type(report["schema_version"]) is not int or report["schema_version"] != 1
+    if (type(report["schema_version"]) is not int or report["schema_version"] not in (1, 2)
             or report["scope"] != "CORE_PACKAGE_INSTALL" or report["status"] != "passed"
             or not isinstance(report["packages"], list) or len(report["packages"]) != 2):
         raise ValueError("需要两种发行包均通过的独立安装报告")
@@ -69,8 +70,15 @@ def package_row(job, run, gateway):
         raise ValueError("无法辨认打包作业的运行器和 Python 系列")
     system, series = match.groups()
     evidence = job_link(job, run, system, "测试与模拟规则基准", "检查归档内容、独立安装和 SHA-256")
+    checks = "各自在新环境安装，运行策略体检、基准和代理 ping"
     if package_artifact_name(job) is not None:
         report = job["package_install_report"]
+        checked = any(step["name"] == PROTOCOL_STEP for step in job["steps"])
+        protocol = validate_protocols(report, require_protocol=checked)
+        if protocol is not None:
+            if not checked:
+                raise ValueError("协议报告缺少对应的 CI 握手验收步骤")
+            checks = f"两份包分别完成安装、策略体检、基准、MCP {protocol} 握手、工具发现和 ping"
         if system == "macos-15":
             details, components = mac_package_details(report, series, gateway)
         else:
@@ -80,7 +88,7 @@ def package_row(job, run, gateway):
         if "package_install_report" in job:
             raise ValueError("安装报告缺少对应的验收和上传步骤")
         environment, components = f"`{system}` · Python {series}", "wheel 和 sdist"
-    return f"| 核心包安装 | {environment} | {components} | 各自在新环境安装，运行策略体检、基准和代理 ping | {evidence} |"
+    return f"| 核心包安装 | {environment} | {components} | {checks} | {evidence} |"
 
 
 def inspector_row(report, job, run, system):

@@ -2,7 +2,8 @@
 from copy import deepcopy
 import unittest
 
-from scripts.support_matrix import render_matrix
+from scripts.package_protocol import PROTOCOL_STEP
+from scripts.support_matrix import package_row, render_matrix
 from scripts.support_evidence import RECOVERY_CHECK_STEP
 
 
@@ -402,6 +403,41 @@ class SupportMatrixTests(unittest.TestCase):
             package["filename"] = package["filename"].replace("0.3.0a1", "0.3.0a2")
         with self.assertRaises(ValueError):
             self.render(verify_jobs=[*self.jobs, entry])
+
+    def test_protocol_is_shown_only_for_two_checked_installations(self):
+        for entry in (mac_package_job(), x64_package_job("windows-latest"), x64_package_job("ubuntu-latest")):
+            with self.subTest(job=entry["name"]):
+                report = entry["package_install_report"]
+                protocol_step = {"name": PROTOCOL_STEP, "status": "completed", "conclusion": "success"}
+                legacy = package_row(entry, VERIFY_RUN, "0.3.0a1")
+                self.assertNotIn("握手", legacy)
+                entry["steps"].append(protocol_step)
+                with self.assertRaises(ValueError):
+                    package_row(entry, VERIFY_RUN, "0.3.0a1")
+                report["schema_version"] = 2
+                for package in report["packages"]:
+                    package["protocol_version"] = "2025-06-18"
+                row = package_row(entry, VERIFY_RUN, "0.3.0a1")
+                self.assertIn("MCP 2025-06-18 握手", row)
+                self.assertIn("CPython", row)
+                for package in report["packages"]:
+                    value = package.pop("protocol_version")
+                    with self.assertRaises(ValueError):
+                        package_row(entry, VERIFY_RUN, "0.3.0a1")
+                    package["protocol_version"] = value
+                entry["steps"].pop()
+                with self.assertRaises(ValueError):
+                    package_row(entry, VERIFY_RUN, "0.3.0a1")
+
+    def test_partial_protocol_job_cannot_fall_back_to_legacy_row(self):
+        step = {"name": PROTOCOL_STEP, "status": "completed", "conclusion": "success"}
+        entry = mac_package_job()
+        for steps in ([{**step, "conclusion": "skipped"}], [{**step, "conclusion": "failure"}], [step, step]):
+            with self.subTest(steps=steps), self.assertRaises(ValueError):
+                package_row({**entry, "steps": entry["steps"] + steps}, VERIFY_RUN, "0.3.0a1")
+        without_report = job(150, "test (macos-15, 3.12)", "macos-15", VERIFY_RUN, [*CORE_STEPS, PROTOCOL_STEP])
+        with self.assertRaises(ValueError):
+            package_row(without_report, VERIFY_RUN, "0.3.0a1")
 
     def test_package_receipt_validates_each_archive_and_measured_platform(self):
         cases = (
