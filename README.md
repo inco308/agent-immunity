@@ -61,6 +61,8 @@ python -m agent_immunity.mcp_stdio --policy examples/policy.json -- python ../lo
 
 在 Codex 中接入第三方时区工具的试点覆盖两版 `mcp-server-time` 的安装、升级和回退。项目配置、依赖锁和业务验收命令见[编码宿主试点](docs/codex-time-pilot.md)。
 
+两个 Codex 会话也可以通过 Mozaik 定向交接工单。接收端使用真实模型请求本地 MCP 工具，按模型动作、网关回执、上游收件与文件哈希核对允许读取和受限写入。[Mozaik 隔离试点](docs/mozaik-codex-pilot.md)
+
 [互操作验证指南](docs/interop.md)提供固定版本的 MCP Inspector 2.14.0 `mcpdo` 客户端与官方 Python SDK 1.30.0 上游：在同一个持久连接中读取项目资料、计算汇总、写入并重新读取报告，再实际发布到本地 HTTP 接收器。还验证越权、已知凭证传递、工具错误、超时后的新会话及独立 SDK 取消链。
 
 此入口使用 Python 3.12、Node 24.22.1 和单独锁定依赖；不修改全局客户端配置。结果保存在 `artifacts/interop/report.json`，实际业务产物为 `artifacts/interop/status-report.md`。报告公开保留“重连后旧凭证状态未继承”的已知漏检。流程没有调用 LLM，不代表模型规划评测或其他客户端宿主的兼容性。

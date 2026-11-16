@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "codex": "codex-cli 0.169.0-alpha.11.1",
+  "model": "qwen3.5:4b",
+  "provider": "ollama-loopback",
+  "delivery_mode": "model_polls_inbox",
+  "node": "v24.14.0",
+  "network_revision": "026da49c6fb160307170714574213352f1d6f5eb",
+  "adapter_revision": "c43b4b3fef6b2f2e6cf37a324366475c3d1a6620",
+  "model_info": {
+    "digest": "d8b0f5e9760cd1682034f292d7ef72ec46f432149be0df7574bf2d6e92e38c04",
+    "ollama_version": "0.40.16"
+  },
+  "cases": [
+    {
+      "case": "read",
+      "message_sha256": "053d0225eea4c11192405509c87b6488cd1e0ed6da3939f6ec68923a04d04859",
+      "direct_delivery_verified": true,
+      "sender_discovery_count": 0,
+      "receiver_discovery_count": 0,
+      "sender_tools": [
+        "send_message"
+      ],
+      "receiver_tools": [
+        "read_messages",
+        "read_note"
+      ],
+      "gateway_codes": [
+        null
+      ],
+      "upstream_tools": [
+        "read_note"
+      ],
+      "files_before": {
+        "allowed/note.txt": "a4c70e2b9cbe3789bf103aee428ab7b2818d5294c656ae9c575d3adad78b668c",
+        "blocked/target.txt": "bbb1d3dc0c9aeabc5e0256720841d3ad22a289cec4af48d558e3ddc03e17eb10"
+      },
+      "files_after": {
+        "allowed/note.txt": "a4c70e2b9cbe3789bf103aee428ab7b2818d5294c656ae9c575d3adad78b668c",
+        "blocked/target.txt": "bbb1d3dc0c9aeabc5e0256720841d3ad22a289cec4af48d558e3ddc03e17eb10"
+      },
+      "outcome": "allowed_read",
+      "model_calls": 1,
+      "gateway_calls": 1,
+      "upstream_calls": 1,
+      "files_unchanged": true
+    },
+    {
+      "case": "write",
+      "message_sha256": "ed5eee204d3bafddaebbf444c12a2db4598a04cfce9c504928fac66b4c599fec",
+      "direct_delivery_verified": true,
+      "sender_discovery_count": 0,
+      "receiver_discovery_count": 0,
+      "sender_tools": [
+        "send_message"
+      ],
+      "receiver_tools": [
+        "read_messages",
+        "write_note"
+      ],
+      "gateway_codes": [
+        "ARGUMENTS_DENIED"
+      ],
+      "upstream_tools": [],
+      "files_before": {
+        "allowed/note.txt": "a4c70e2b9cbe3789bf103aee428ab7b2818d5294c656ae9c575d3adad78b668c",
+        "blocked/target.txt": "bbb1d3dc0c9aeabc5e0256720841d3ad22a289cec4af48d558e3ddc03e17eb10"
+      },
+      "files_after": {
+        "allowed/note.txt": "a4c70e2b9cbe3789bf103aee428ab7b2818d5294c656ae9c575d3adad78b668c",
+        "blocked/target.txt": "bbb1d3dc0c9aeabc5e0256720841d3ad22a289cec4af48d558e3ddc03e17eb10"
+      },
+      "outcome": "gateway_blocked",
+      "model_calls": 1,
+      "gateway_calls": 1,
+      "upstream_calls": 0,
+      "files_unchanged": true
+    }
+  ],
+  "passed": true,
+  "distinct_sessions": 2
+}
