@@ -8,7 +8,7 @@ from unittest.mock import patch
 from pathlib import Path
 from agent_immunity import DynamicImmunityEngine, Policy, PolicyError, ToolCall, ToolResult
 from agent_immunity.core.agent_runtime import CausalActionDAG
-from agent_immunity.core.policy import strict_json
+from agent_immunity.core.policy import UnsupportedPolicyVersion, strict_json
 from tests.support import DATA, policy, policy_data, temporary_directory
 
 class PolicyEngineTests(unittest.TestCase):
@@ -213,6 +213,16 @@ class PolicyEngineTests(unittest.TestCase):
         data["tools"]["python_version"]["capabilites"] = ["network"]
         with self.assertRaises(PolicyError):
             Policy.from_dict(data)
+
+    def test_unknown_integer_version_is_rejected_before_v1_interpretation(self):
+        with patch("agent_immunity.core.policy.resolved") as resolve:
+            for version in (0, -1, 2):
+                data = {"version": version, "workspace": "private-workspace", "future_field": "private-value"}
+                with self.subTest(version=version), self.assertRaises(UnsupportedPolicyVersion) as error:
+                    Policy.from_dict(data)
+                self.assertIsInstance(error.exception, PolicyError)
+                self.assertNotIn("private-", str(error.exception))
+        resolve.assert_not_called()
 
     def test_invalid_json_and_types(self):
         for text in ['{"version":1,"version":1}', '{"value":NaN}']:

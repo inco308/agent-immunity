@@ -8,8 +8,17 @@ from pathlib import Path, PureWindowsPath
 from types import MappingProxyType
 from urllib.parse import urlsplit
 
+POLICY_FORMAT_VERSION = 1
+UNSUPPORTED_VERSION_HINT = (
+    f"当前网关支持策略格式 version={POLICY_FORMAT_VERSION}。请恢复最近通过验收的配套策略，"
+    "或使用支持目标策略格式的网关，再运行策略体检。"
+)
+
 class PolicyError(ValueError):
     pass
+
+class UnsupportedPolicyVersion(PolicyError):
+    """策略声明了当前网关无法解释的整数版本。"""
 
 def resolved(path, strict=False):
     try:
@@ -113,10 +122,16 @@ class Policy:
 
     @classmethod
     def from_dict(cls, data, base=None):
-        if not isinstance(data, dict) or set(data) - {"version", "workspace", "tools", "transitions", "max_bytes", "max_secrets", "max_events"}:
+        if not isinstance(data, dict):
             raise PolicyError("无效策略字段")
-        if type(data.get("version")) is not int or data["version"] != 1:
-            raise PolicyError("仅支持 version=1 的策略")
+        version = data.get("version")
+        if type(version) is not int:
+            raise PolicyError("策略 version 必须是整数")
+        # 未知格式可能包含新字段。先判定版本，再解释该格式的工具与权限。
+        if version != POLICY_FORMAT_VERSION:
+            raise UnsupportedPolicyVersion(UNSUPPORTED_VERSION_HINT)
+        if set(data) - {"version", "workspace", "tools", "transitions", "max_bytes", "max_secrets", "max_events"}:
+            raise PolicyError("无效策略字段")
         if not isinstance(data.get("workspace"), str) or not data["workspace"]:
             raise PolicyError("必须指定 workspace")
         workspace = resolved(Path(base or Path.cwd()) / data["workspace"], strict=True)

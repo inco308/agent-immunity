@@ -105,6 +105,43 @@ class StdioIntegrationTests(unittest.TestCase):
         self.assertEqual(client.call("read_file", {"path": "sample.txt"})["result"]["content"][0]["text"], "公开样本文本")
         self.assertIn("Python", client.call("python_version", {})["result"]["content"][0]["text"])
 
+    def test_policy_version_failure_stops_before_upstream_start(self):
+        private = "private-policy-diagnostic-957413"
+        version = 693241
+        path = self.root / f"{private}.json"
+        marker = self.root / "server.pid"
+        command = [sys.executable, "-X", "utf8", "-m", "agent_immunity.mcp_stdio", "--policy", str(path), "--",
+                   sys.executable, "-u", str(FIXTURES / "mcp_server.py"), "--root", str(self.root)]
+        cases = (
+            ("unsupported", json.dumps({"version": version, private: "future"}), True),
+            ("broken", f'{{"version":{version},"{private}":', False),
+            ("wrong_type", json.dumps({"version": True, "workspace": ".", "tools": {}}), False),
+        )
+        for label, content, unsupported in cases:
+            with self.subTest(case=label):
+                path.write_text(content, encoding="utf-8")
+                # 等待启动校验自行退出，保持 stdin 开启，避免客户端 EOF 抢先结束代理。
+                with subprocess.Popen(command, cwd=REPO, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                      stderr=subprocess.PIPE) as proxy:
+                    try:
+                        code = proxy.wait(timeout=6)
+                    finally:
+                        stdout, stderr = proxy.communicate(timeout=6)
+                self.assertEqual(code, 2)
+                self.assertEqual(stdout, b"")
+                diagnostic = stderr.decode("utf-8")
+                self.assertEqual("POLICY_VERSION_UNSUPPORTED" in diagnostic, unsupported)
+                if not unsupported:
+                    self.assertIn("无法加载有效的本地策略", diagnostic)
+                for value in (private, str(version), str(self.root), "Traceback"):
+                    self.assertNotIn(value, diagnostic)
+                self.assertFalse(marker.exists())
+
+        # 相同上游在通过 v1 校验时，写出 PID 标记并完成真实初始化握手。
+        client = self.client()
+        self.assertTrue(marker.read_text(encoding="utf-8").isdigit())
+        self.assertEqual(client.request("ping")["result"], {})
+
     def test_denied_calls_do_not_reach_upstream(self):
         client = self.client()
         for name, arguments in [("dispatch", {}), ("http_execute", {}), ("write_file", {"path": "../escape.txt", "content": "bad"})]:
