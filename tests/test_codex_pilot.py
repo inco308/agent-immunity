@@ -6,7 +6,8 @@ import io
 import json
 from pathlib import Path
 import re
-from subprocess import CompletedProcess
+from subprocess import CalledProcessError, CompletedProcess, DEVNULL, run as run_process
+import sys
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -40,6 +41,7 @@ class CodexPilotLifecycleTests(unittest.TestCase):
         self.args = SimpleNamespace(environment=env_file, output_dir=self.output,
                                     codex="pilot-test-codex", preflight_only=False)
         self.observations = []
+        self.identity_checks = []
         self.failure = None
         self.readbacks = []
         self.account_writes = []
@@ -58,6 +60,8 @@ class CodexPilotLifecycleTests(unittest.TestCase):
 
     def mock_preflight(self, environment, slot, output, policy, *, catalog_only=False):
         self.assertEqual(environment[slot], self.environment[slot])
+        if "gateway_slots" in self.environment:
+            self.assertEqual(environment["gateway"], self.environment["gateway_slots"][slot]["python"])
         self.assertEqual(output, self.output)
         if not catalog_only:
             self.assertEqual(policy, self.policy_path)
@@ -73,6 +77,32 @@ class CodexPilotLifecycleTests(unittest.TestCase):
                 "catalog_sha256": catalog_hash}
 
     def mock_command(self, argv, cwd):
+        if argv[1:4] == ["-I", "-m", "agent_immunity.doctor"]:
+            self.assertEqual(str(argv[0]), self.environment["gateway_slots"]["candidate"]["python"])
+            self.assertEqual(argv[4:], ["--policy", str(self.output / "candidate-policy.json"),
+                                        "--catalog", str(self.output / "candidate-tools.json"), "--json"])
+            if self.failure == "runtime_policy":
+                raise CalledProcessError(1, argv, output=json.dumps({"status": "error", "scope": "policy_and_catalog"}))
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(doctor.main(argv[4:]), 0)
+            return output.getvalue()
+        if len(argv) > 4 and Path(argv[4]).name == "wheel_identity.py":
+            slots = self.environment["gateway_slots"]
+            slot = next(name for name, entry in slots.items() if entry["python"] == argv[0])
+            entry = slots[slot]
+            self.assertEqual(cwd, self.output)
+            self.assertEqual(argv[1:], ["-I", "-X", "utf8", str(pilot.HERE / "wheel_identity.py"),
+                                        "--wheel", entry["wheel"], "--version", entry["version"],
+                                        "--sha256", entry["wheel_sha256"]])
+            self.identity_checks.append((slot, len(self.observations)))
+            metadata = checksum(f"{slot} metadata".encode())
+            if slot == "candidate" and len(self.observations) == 1 and self.failure == "candidate_identity":
+                raise ValueError("候选网关安装核验失败")
+            if slot == "candidate" and len(self.observations) == 2 and self.failure == "metadata_changed":
+                metadata = checksum(b"modified after call")
+            return json.dumps({"version": entry["version"], "wheel_sha256": entry["wheel_sha256"],
+                               "runtime_files": 8, "metadata_sha256": metadata})
         if argv[1:] == ["--version"]:
             return f"codex-cli {pilot.HOST_VERSION}\n"
         if argv == ["git", "init", "--quiet"]:
@@ -91,6 +121,7 @@ class CodexPilotLifecycleTests(unittest.TestCase):
             match = re.fullmatch(r"mcp_servers\.time_pilot\s*=\s*\{\s*command\s*=\s*(.+?),\s*args\s*=\s*(\[.*\])\s*\}", override)
             self.assertIsNotNone(match, "回读应使用项目文件中的单个 dotted 赋值")
             command, arguments = (json.loads(value) for value in match.groups())
+            self.last_registration_args = arguments
             self.readbacks.append(override)
             return json.dumps({"transport": {"type": "stdio", "command": command, "args": arguments}, "enabled": True})
         if "mcp" in argv and any(verb in argv for verb in ("add", "remove")):
@@ -119,7 +150,15 @@ class CodexPilotLifecycleTests(unittest.TestCase):
         policy_path = self.policy_path
         if expect_weekday and getattr(self.args, "candidate_policy_template", None):
             policy_path = self.output / "candidate-policy.json"
-        for value in (self.environment["gateway"], self.environment[slot], str(policy_path)):
+        gateway = self.environment["gateway"]
+        if "gateway_slots" in self.environment:
+            gateway = self.environment["gateway_slots"][slot]["python"]
+            other_gateway = self.environment["gateway_slots"][other]["python"]
+            self.assertNotIn(json.dumps(other_gateway, ensure_ascii=False).encode("utf-8"), config)
+        upstream = self.environment[slot]
+        if expect_weekday and getattr(self.args, "simulate_candidate_startup_failure", False):
+            upstream = str(self.output / "absent-candidate-upstream")
+        for value in (gateway, upstream, str(policy_path)):
             self.assertIn(json.dumps(value, ensure_ascii=False).encode("utf-8"), config)
         self.assertNotIn(json.dumps(self.environment[other], ensure_ascii=False).encode("utf-8"), config)
         self.observations.append((slot, config, checksum(policy_path.read_bytes())))
@@ -130,7 +169,8 @@ class CodexPilotLifecycleTests(unittest.TestCase):
                 raise TypeError("候选宿主响应形状异常")
             if self.failure == "not_mapping":
                 return []
-        return {"weekday_field": expect_weekday}
+        return {"visible_tools": ["convert_time"], "source": "UTC 09:00", "target": "Asia/Tokyo 18:00",
+                "difference": "+9.0h", "weekday_field": expect_weekday, "denial": "TRANSITION_DENIED"}
 
     def run_trial(self):
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
@@ -147,7 +187,9 @@ class CodexPilotLifecycleTests(unittest.TestCase):
         candidate = self.output / "candidate-policy.json"
 
         def installed_doctor(argv, **_options):
-            self.assertEqual(argv[:4], [self.environment["gateway"], "-I", "-m", "agent_immunity.doctor"])
+            checker = getattr(self.args, "policy_check_python", self.environment["gateway"])
+            self.assertEqual(str(argv[0]), str(checker))
+            self.assertEqual(argv[1:4], ["-I", "-m", "agent_immunity.doctor"])
             options = argv[4:]
             self.assertEqual(Path(options[options.index("--policy") + 1]), candidate)
             self.assertEqual(Path(options[options.index("--baseline") + 1]), self.policy_path)
@@ -183,6 +225,8 @@ class CodexPilotLifecycleTests(unittest.TestCase):
         self.assertEqual([slot for slot, _, _ in self.observations], ["previous", "candidate", "previous"])
         self.assertEqual(self.active.read_bytes(), original)
         self.assertEqual(self.observations[1][2], checksum(data))
+        self.assertEqual([stage["policy_sha256"] for stage in report["stages"]],
+                         [policy_hash for _, _, policy_hash in self.observations])
 
     def check_held_candidate(self, data, code, status, finding):
         report, writes = self.check_candidate_template(data, code)
@@ -216,6 +260,98 @@ class CodexPilotLifecycleTests(unittest.TestCase):
         self.host.assert_not_called()
         self.assertFalse(self.active.exists())
 
+    def enable_verified_previews(self):
+        root = self.args.environment.parent
+        slots = {}
+        for index, name in enumerate(("previous", "candidate"), start=1):
+            slots[name] = {
+                "version": "0.3.0a1", "python": str(root / f"gateway-{name}-python"),
+                "wheel": str(root / name / "agent_immunity-0.3.0a1-py3-none-any.whl"),
+                "run_id": index, "artifact_id": index + 10, "commit": str(index) * 40,
+                "wheel_sha256": checksum(f"{name} wheel".encode()),
+            }
+            slot = slots[name]
+            wheel = Path(slot["wheel"])
+            wheel.parent.mkdir()
+            receipt = {key: slot[key] for key in ("version", "commit", "run_id", "artifact_id")}
+            receipt["files"] = {wheel.name: slot["wheel_sha256"]}
+            (wheel.parent / "receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+        self.environment.update(schema_version=2, gateway_slots=slots, gateway=slots["previous"]["python"],
+                                gateway_wheel_sha256=slots["previous"]["wheel_sha256"])
+        self.args.environment.write_text(json.dumps(self.environment), encoding="utf-8")
+        self.args.require_verified_gateways = True
+        return slots
+
+    def test_two_same_version_builds_follow_host_and_upstream_through_rollback(self):
+        slots = self.enable_verified_previews()
+        self.assertEqual(self.run_trial(), 0)
+        report = self.read_report()
+        self.assertEqual(report["gateway_mode"], "verified_previews")
+        self.assertEqual(report["status"], "passed")
+        stages = report["stages"]
+        self.assertEqual([item["phase"] for item in stages], ["install", "upgrade", "rollback"])
+        for item, slot in zip(stages, ("previous", "candidate", "previous")):
+            original = slots[slot]
+            self.assertEqual(item["gateway"], {
+                **{key: original[key] for key in ("commit", "artifact_id", "run_id", "version", "wheel_sha256")},
+                "metadata_sha256": checksum(f"{slot} metadata".encode()), "runtime_files": 8,
+            })
+            self.assertEqual(item["version"], pilot.VERSIONS[slot])
+            self.assertEqual(item["weekday_field"], slot == "candidate")
+            self.assertEqual(item["denial"], "TRANSITION_DENIED")
+        self.assertEqual(self.identity_checks, [
+            ("previous", 0), ("candidate", 0),  # 预检两个环境
+            ("previous", 0), ("previous", 1), ("candidate", 1), ("candidate", 2),
+            ("previous", 2), ("previous", 3),  # 每次调用前后均按活动解释器核验
+        ])
+        self.assertEqual(self.active.read_bytes(), self.observations[0][1])
+
+    def test_failed_candidate_identity_preserves_previous_registration_before_switch(self):
+        self.enable_verified_previews()
+        self.failure = "candidate_identity"
+        self.assertEqual(self.run_trial(), 1)
+        report = self.read_report()
+        self.assertEqual(report["attempted_phase"], "upgrade")
+        self.assertEqual([stage["phase"] for stage in report["stages"]], ["install"])
+        self.assertEqual([slot for slot, _, _ in self.observations], ["previous"])
+        self.assertEqual(len(self.readbacks), 1)
+        self.assertEqual(self.active.read_bytes(), self.observations[0][1])
+        self.assertEqual(report["restored_verified_config_sha256"], report["stages"][0]["config_sha256"])
+
+    def test_changed_candidate_identity_after_host_call_restores_previous_config(self):
+        self.enable_verified_previews()
+        self.check_candidate_failure("metadata_changed")
+
+    def test_required_verified_mode_rejects_legacy_descriptor(self):
+        self.args.require_verified_gateways = True
+        self.assertEqual(self.run_trial(), 1)
+        self.assertEqual(self.read_report()["stages"], [])
+        self.preflight.assert_not_called()
+        self.host.assert_not_called()
+        self.assertFalse(self.active.exists())
+
+    def test_missing_candidate_slot_cannot_fall_back_to_legacy_gateway(self):
+        slots = self.enable_verified_previews()
+        del slots["candidate"]
+        self.args.require_verified_gateways = False
+        self.args.environment.write_text(json.dumps(self.environment), encoding="utf-8")
+        self.assertEqual(self.run_trial(), 1)
+        self.assertEqual(self.read_report()["stages"], [])
+        self.preflight.assert_not_called()
+        self.host.assert_not_called()
+        self.assertFalse(self.active.exists())
+
+    def test_receipt_commit_mismatch_stops_before_any_host_stage(self):
+        slots = self.enable_verified_previews()
+        receipt = Path(slots["previous"]["wheel"]).with_name("receipt.json")
+        source = json.loads(receipt.read_bytes())
+        source["commit"] = "f" * 40
+        receipt.write_text(json.dumps(source), encoding="utf-8")
+        self.assertEqual(self.run_trial(), 1)
+        self.assertEqual(self.read_report()["stages"], [])
+        self.host.assert_not_called()
+        self.assertFalse(self.active.exists())
+
     def check_candidate_failure(self, failure):
         self.failure = failure
         self.assertEqual(self.run_trial(), 1)
@@ -238,6 +374,184 @@ class CodexPilotLifecycleTests(unittest.TestCase):
 
     def test_returning_a_malformed_stage_result_cannot_promote_candidate_to_verified(self):
         self.check_candidate_failure("not_mapping")
+
+    def fail_candidate_startup(self, state="failed", on_candidate=None, on_recovery=None):
+        """让宿主在实际读取候选配置后报错，保留后续连接独立的观察记录。"""
+        def observe(binary, project, *, expect_weekday):
+            result = self.inspect_active_config(binary, project, expect_weekday=expect_weekday)
+            if expect_weekday:
+                if on_candidate:
+                    on_candidate()
+                raise pilot.GatewayStartupError(state)
+            if len(self.observations) == 3 and on_recovery:
+                on_recovery()
+            return result
+
+        self.host.side_effect = observe
+
+    def test_candidate_startup_failure_reconnects_and_checks_verified_original(self):
+        self.enable_verified_previews()
+        self.fail_candidate_startup()
+        self.assertEqual(self.run_trial(), 1)
+        report = self.read_report()
+        self.assertEqual((report["status"], report["attempted_phase"], report["failure_type"]),
+                         ("failed", "upgrade", "GatewayStartupError"))
+        self.assertEqual([s["phase"] for s in report["stages"]], ["install"])
+        self.assertEqual([s for s, _, _ in self.observations], ["previous", "candidate", "previous"])
+        self.assertEqual(self.observations[0], self.observations[2])
+        self.assertEqual(self.active.read_bytes(), self.observations[0][1])
+        self.assertEqual(self.identity_checks[-2:], [("previous", 2), ("previous", 3)])
+        first = report["stages"][0]
+        recovery = report["recovery"]
+        self.assertEqual((recovery["phase"], recovery["status"]), ("recovery", "passed"))
+        for key in ("config_sha256", "gateway", "version", "visible_tools", "source", "target",
+                    "difference", "weekday_field", "denial"):
+            self.assertEqual(recovery[key], first[key], key)
+        self.assertEqual(report["restored_verified_config_sha256"], checksum(self.active.read_bytes()))
+        self.assertEqual(self.account_writes, [])
+        self.assertNotIn("fault", report)
+
+    def test_checked_candidate_startup_failure_recovers_previous_wheel_and_policy(self):
+        slots = self.enable_verified_previews()
+        self.args.policy_check_python = self.output.parent / "policy-check-python"
+        self.args.simulate_candidate_startup_failure = True
+
+        def run_fault_probe():
+            # 宿主与安装收据使用测试替身，故障探针根据回读的真实参数运行本检出的网关。
+            args = self.last_registration_args
+            self.assertEqual(args[:2], ["-I", str(pilot.HERE / "startup_probe.py")])
+            probe = run_process([sys.executable, "-m", "pilot.codex_time.startup_probe", *args[2:]],
+                                cwd=pilot.REPO, stdin=DEVNULL, capture_output=True, timeout=10, check=False)
+            self.assertEqual(probe.returncode, 1)
+
+        self.fail_candidate_startup(on_candidate=run_fault_probe)
+        policy = json.loads((pilot.HERE / "policy.json").read_bytes())
+        policy["max_events"] = 32
+        candidate = json.dumps(policy).encode()
+        report, writes = self.check_candidate_template(candidate, 1)
+        first, recovery = report["stages"][0], report["recovery"]
+        self.assertEqual(report["policy_comparison"]["status"], "pass")
+        self.assertEqual(report["policy_comparison"]["candidate_runtime_check"], "pass")
+        self.assertEqual((report["status"], report["failure_type"], recovery["status"]),
+                         ("failed", "GatewayStartupError", "passed"))
+        self.assertEqual([stage["phase"] for stage in report["stages"]], ["install"])
+        original, attempted, restored = self.observations
+        self.assertEqual([original[0], attempted[0], restored[0]], ["previous", "candidate", "previous"])
+        self.assertEqual(writes, [original[1], attempted[1], original[1]])
+        self.assertEqual(original, restored)
+        self.assertEqual(attempted[2], checksum(candidate))
+        self.assertNotEqual(original[2], attempted[2])
+        self.assertEqual(recovery["policy_sha256"], original[2])
+        self.assertEqual(recovery["gateway"]["wheel_sha256"], slots["previous"]["wheel_sha256"])
+        fault = report["fault"]
+        self.assertEqual((fault["kind"], fault["exit_code"]), ("missing_candidate_upstream", 1))
+        self.assertEqual(fault["config_sha256"], checksum(attempted[1]))
+        self.assertEqual(fault["policy_sha256"], attempted[2])
+        self.assertEqual(fault["gateway"]["wheel_sha256"], slots["candidate"]["wheel_sha256"])
+        for field in ("gateway", "policy_sha256", "config_sha256", "version", "source", "target",
+                      "difference", "visible_tools", "weekday_field", "denial"):
+            self.assertEqual(recovery[field], first[field], field)
+
+    def test_verified_review_precedes_simulated_candidate_startup(self):
+        slots = self.enable_verified_previews()
+        self.args.policy_check_python = self.output.parent / "policy-check-python"
+        self.args.simulate_candidate_startup_failure = True
+        candidate = (pilot.HERE / "expanded-policy.json").read_bytes()
+        with patch.object(pilot, "startup_fault_registration") as inject_fault:
+            report, writes = self.check_candidate_template(candidate, 2)
+        inject_fault.assert_not_called()
+        self.assertEqual(report["policy_comparison"]["codes"], ["POLICY_TOOL_ADDED"])
+        self.assertEqual(report["status"], "review")
+        self.assertEqual([item["phase"] for item in report["stages"]], ["install"])
+        self.assertEqual([item[0] for item in self.observations], ["previous", "previous"])
+        self.assertEqual(writes, [self.active.read_bytes()])
+        self.assertEqual(report["retained"]["gateway"]["wheel_sha256"], slots["previous"]["wheel_sha256"])
+        self.assertEqual(report["retained"]["policy_sha256"], checksum(self.policy_path.read_bytes()))
+        self.assertNotIn("fault", report)
+        self.assertNotIn("recovery", report)
+
+    def test_frozen_candidate_policy_check_can_stop_approved_upgrade(self):
+        slots = self.enable_verified_previews()
+        self.args.policy_check_python = self.output.parent / "policy-check-python"
+        self.args.candidate_policy_template = pilot.HERE / "policy.json"
+        self.failure = "runtime_policy"
+        with patch.object(pilot, "compare_candidate", return_value={"status": "pass", "codes": []}) as approved:
+            self.assertEqual(self.run_trial(), 1)
+        approved.assert_called_once()
+        report = self.read_report()
+        self.assertEqual(report["status"], "failed")
+        self.assertEqual(report["policy_comparison"]["status"], "pass")
+        self.assertEqual(report["policy_comparison"]["candidate_runtime_check"], "error")
+        self.assertEqual([stage["phase"] for stage in report["stages"]], ["install"])
+        self.assertEqual([slot for slot, _, _ in self.observations], ["previous", "previous"])
+        self.assertEqual(report["retained"]["gateway"], report["stages"][0]["gateway"])
+        self.assertEqual(self.active.read_bytes(), self.observations[0][1])
+        self.assertTrue(any(call.args[0][:4] == [slots["candidate"]["python"], "-I", "-m", "agent_immunity.doctor"]
+                            for call in self.command.call_args_list))
+
+    def test_recovery_host_failure_preserves_original_failure_and_does_not_retry(self):
+        def no_reconnection():
+            raise ConnectionError("恢复宿主连接失败")
+
+        self.fail_candidate_startup("discovery_timeout", on_recovery=no_reconnection)
+        self.assertEqual(self.run_trial(), 1)
+        report = self.read_report()
+        self.assertEqual((report["status"], report["failure_type"], report["host_startup_state"]),
+                         ("failed", "GatewayStartupError", "discovery_timeout"))
+        self.assertEqual((report["recovery"]["status"], report["recovery"]["error_type"]),
+                         ("failed", "ConnectionError"))
+        self.assertEqual(self.host.call_count, 3)
+        self.assertEqual(self.active.read_bytes(), self.observations[0][1])
+
+    def test_changed_original_install_is_rejected_before_recovery_connection(self):
+        slots = self.enable_verified_previews()
+        self.fail_candidate_startup()
+        inspect = pilot.gateway_identity
+
+        def changed_install(entry, root):
+            identity = inspect(entry, root)
+            if entry == slots["previous"] and len(self.observations) >= 2:
+                identity["metadata_sha256"] = checksum(b"replacement metadata")
+            return identity
+
+        with patch.object(pilot, "gateway_identity", side_effect=changed_install):
+            self.assertEqual(self.run_trial(), 1)
+        report = self.read_report()
+        self.assertEqual(report["recovery"]["status"], "failed")
+        self.assertEqual(self.host.call_count, 2)
+
+    def test_policy_drift_before_recovery_prevents_new_host_connection(self):
+        self.fail_candidate_startup(on_candidate=lambda: self.policy_path.write_bytes(b"{}"))
+        self.assertEqual(self.run_trial(), 1)
+        report = self.read_report()
+        self.assertEqual(report["recovery"]["status"], "failed")
+        self.assertEqual(self.host.call_count, 2)
+
+    def test_policy_drift_during_reconnection_cannot_report_service_recovered(self):
+        self.fail_candidate_startup(on_recovery=lambda: self.policy_path.write_bytes(b"{}"))
+        self.assertEqual(self.run_trial(), 1)
+        report = self.read_report()
+        self.assertEqual(report["recovery"]["status"], "failed")
+        self.assertEqual(self.host.call_count, 3)
+
+    def test_interrupted_upgrade_restores_configuration_without_reconnecting(self):
+        def stop():
+            raise KeyboardInterrupt()
+
+        self.fail_candidate_startup(on_candidate=stop)
+        with self.assertRaises(KeyboardInterrupt):
+            self.run_trial()
+        report = self.read_report()
+        self.assertEqual(report["failure_type"], "KeyboardInterrupt")
+        self.assertEqual(self.host.call_count, 2)
+        self.assertEqual(self.active.read_bytes(), self.observations[0][1])
+
+    def test_first_startup_failure_has_no_verified_service_to_reconnect(self):
+        self.host.side_effect = pilot.GatewayStartupError("failed")
+        self.assertEqual(self.run_trial(), 1)
+        self.assertEqual(self.host.call_count, 1)
+        self.assertEqual(self.read_report()["stages"], [])
+        self.assertFalse(self.active.exists())
 
     def test_three_stages_switch_upstream_and_keep_one_policy(self):
         self.assertEqual(self.run_trial(), 0)

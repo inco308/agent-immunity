@@ -8,7 +8,6 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
-import tomllib
 import zipfile
 
 
@@ -18,8 +17,16 @@ SCOPE = "CODEX_TIME_PILOT_ENVIRONMENT"
 UPSTREAM = {"previous": "2025.8.4", "candidate": "2025.9.25"}
 SDK = "1.30.0"
 
+# 兼容原有直接运行 prepare.py 的命令。
+if __package__ in (None, ""):
+    sys.path.insert(0, str(REPO))
+from scripts.fetch_verified_dist import fetch_verified
+
 
 def check_wheel(wheel):
+    # 准备试点环境时要求 3.12；其余版本仍可导入模块或查看帮助。
+    import tomllib
+
     with (REPO / "pyproject.toml").open("rb") as stream:
         version = tomllib.load(stream)["project"]["version"]
     if wheel.name != f"agent_immunity-{version}-py3-none-any.whl":
@@ -77,10 +84,32 @@ print(f'{role}: {installed} @ {module.__file__}')
 """
 
 
-def prepare(root, wheel):
+def fetch_gateway(source, output):
+    run_id, commit = source
+    receipt = fetch_verified(run_id, commit, output)
+    name = f"agent_immunity-{receipt['version']}-py3-none-any.whl"
+    return {
+        "version": receipt["version"], "wheel": str(output / "verified" / name),
+        "wheel_sha256": receipt["files"][name], "run_id": receipt["run_id"],
+        "commit": receipt["commit"], "artifact_id": receipt["artifact_id"],
+    }
+
+
+def prepare(root, wheel=None, *, previous_preview=None, candidate_preview=None):
     if sys.version_info[:2] != (3, 12):
         raise ValueError("请使用 Python 3.12 运行环境准备脚本")
-    version, digest = check_wheel(wheel)
+    if wheel is None:
+        if previous_preview is None or candidate_preview is None:
+            raise ValueError("需同时提供初始和候选预览的运行编号与提交")
+        if previous_preview[0] == candidate_preview[0] or previous_preview[1] == candidate_preview[1]:
+            raise ValueError("两份预览需来自不同的运行和提交")
+    else:
+        if previous_preview is not None or candidate_preview is not None:
+            raise ValueError("请选择本地 wheel 或两份已指定的预览")
+        wheel = Path(wheel).resolve()
+        version, digest = check_wheel(wheel)
+        gateways = {"previous": {"version": version, "wheel": str(wheel), "wheel_sha256": digest}}
+    root = Path(root).resolve()
     root.mkdir(parents=True, exist_ok=True)
     descriptor = root / "environment.json"
     if descriptor.exists():
@@ -94,28 +123,53 @@ def prepare(root, wheel):
     work.mkdir()
     temporary = generation / "tmp"
     temporary.mkdir()
+    github_credentials = {"GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
+                          "ACTIONS_RUNTIME_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"}
     env = {k: v for k, v in os.environ.items()
-           if not k.upper().startswith(("PIP_", "PYTHON")) and k.upper() != "VIRTUAL_ENV"}
+           if not k.upper().startswith(("PIP_", "PYTHON")) and k.upper() != "VIRTUAL_ENV"
+           and k.upper() not in github_credentials}
     env.update(PIP_CONFIG_FILE=os.devnull, PYTHONUTF8="1", TMP=str(temporary),
                TMPDIR=str(temporary), TEMP=str(temporary))
     pip = ["--disable-pip-version-check", "--no-input", "--cache-dir", str(root / "pip-cache"),
            "--timeout", "30", "--retries", "2"]
-    versions = {"gateway": version, **UPSTREAM}
-    result = {"schema_version": 1, "scope": SCOPE, "versions": {**versions, "mcp": SDK}, "gateway_wheel_sha256": digest}
-    for role, expected in versions.items():
-        venv = generation / role
-        print(f"准备 {role} {expected}", flush=True)
+
+    def install(directory, role, expected, requirements):
+        venv = generation / directory
+        print(f"准备 {directory} {expected}", flush=True)
         run([sys.executable, "-I", "-m", "venv", str(venv)], work, env, timeout=120)
         python = interpreter(venv)
-        if role == "gateway":
-            install = ["--no-index", str(wheel)]
-        else:
-            install = ["--index-url", "https://pypi.org/simple", "--only-binary=:all:", "--require-hashes",
-                       "-r", str(HERE / (role + ".lock"))]
-        run([python, "-I", "-m", "pip", *pip, "install", *install], work, env, timeout=600)
+        run([python, "-I", "-m", "pip", *pip, "install", *requirements], work, env, timeout=600)
         run([python, "-I", "-m", "pip", *pip, "check"], work, env, timeout=60)
         run([python, "-I", "-X", "utf8", "-c", INSPECT, role, expected, SDK, str(venv)], work, env, timeout=60)
-        result[role] = str(python)
+        return str(python)
+
+    if wheel is None:
+        gateways = {slot: fetch_gateway(source, generation / f"preview-{slot}")
+                    for slot, source in (("previous", previous_preview), ("candidate", candidate_preview))}
+        if gateways["previous"]["wheel_sha256"] == gateways["candidate"]["wheel_sha256"]:
+            raise ValueError("两个提交提供了相同的网关 wheel，无法区分安装与回退")
+
+    for slot, gateway in gateways.items():
+        directory = f"gateway-{slot}" if wheel is None else "gateway"
+        # 将收据中的摘要交给 pip，核验安装动作实际读取的 wheel 字节。
+        lock = generation / f"{directory}.lock"
+        lock.write_text(f"{Path(gateway['wheel']).as_uri()} --hash=sha256:{gateway['wheel_sha256']}\n", encoding="utf-8")
+        requirements = ["--no-index", "--no-deps", "--require-hashes", "-r", str(lock)]
+        python = install(directory, "gateway", gateway["version"], requirements)
+        run([python, "-I", "-X", "utf8", str(HERE / "wheel_identity.py"), "--wheel", gateway["wheel"],
+             "--sha256", gateway["wheel_sha256"], "--version", gateway["version"]], work, env, timeout=60)
+        gateway["python"] = python
+
+    original = gateways["previous"]
+    result = {"schema_version": 2 if wheel is None else 1, "scope": SCOPE, "gateway": original["python"],
+              "versions": {"gateway": original["version"], **UPSTREAM, "mcp": SDK},
+              "gateway_wheel_sha256": original["wheel_sha256"]}
+    if wheel is None:
+        result["gateway_slots"] = gateways
+    for slot, version in UPSTREAM.items():
+        requirements = ["--index-url", "https://pypi.org/simple", "--only-binary=:all:", "--require-hashes",
+                        "-r", str(HERE / (slot + ".lock"))]
+        result[slot] = install(slot, slot, version, requirements)
     # 所有版本及安装来源核实后才替换描述文件。旧环境的路径仍可用于回滚。
     staged = generation / "environment.json.tmp"
     staged.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -126,10 +180,21 @@ def prepare(root, wheel):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True, help="独立试点环境及 environment.json 的输出目录")
-    parser.add_argument("--wheel", type=Path, required=True, help="由当前仓库源码构建并验收的预览 wheel")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--wheel", type=Path, help="由当前仓库源码构建并验收的预览 wheel")
+    source.add_argument("--previous-preview", nargs=2, metavar=("RUN_ID", "COMMIT"), help="初始网关的 main 构建")
+    parser.add_argument("--candidate-preview", nargs=2, metavar=("RUN_ID", "COMMIT"), help="候选网关的 main 构建")
     args = parser.parse_args()
+    if bool(args.previous_preview) != bool(args.candidate_preview):
+        parser.error("--previous-preview 和 --candidate-preview 必须成对提供，且不可与 --wheel 同用")
     try:
-        print(prepare(args.root.resolve(), args.wheel.resolve()))
+        if args.wheel is not None:
+            print(prepare(args.root, args.wheel))
+        else:
+            previous_id, previous_sha = args.previous_preview
+            candidate_id, candidate_sha = args.candidate_preview
+            print(prepare(args.root, previous_preview=(int(previous_id), previous_sha),
+                          candidate_preview=(int(candidate_id), candidate_sha)))
     except (OSError, ValueError, zipfile.BadZipFile, subprocess.SubprocessError) as exc:
         parser.exit(1, f"环境准备失败：{exc}\n")
 

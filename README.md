@@ -43,7 +43,7 @@ python -X utf8 -m agent_immunity.benchmark.run_evaluation --output artifacts/ben
 
 测试包含独立客户端、代理和上游进程，使用临时目录中的实际文件与 `127.0.0.1` HTTP 接收器观察副作用。受限宿主若禁止回环连接，网络测试会失败；这不能当成代理成功拦截的证据。符号链接用例会在宿主不允许创建链接时明确跳过。
 
-核心代理和标准库测试可直接从源码运行。要安装到当前 Python 环境，可执行 `python -m pip install .`。对应提交的 CI 提供开发预览的 wheel、sdist 和 SHA256SUMS。[获取预览包](docs/doctor.md#获取开发者预览包)
+核心代理和标准库测试可直接从源码运行。要安装到当前 Python 环境，可执行 `python -m pip install .`。使用 CI 预览包时，给出完整提交 SHA 和 Actions 运行编号，即可下载 wheel 与源码包，核对归档及包内摘要，并保存校验收据。[按提交下载并校验预览包](docs/verified-preview.md)
 
 ## 启动 MCP 示例
 

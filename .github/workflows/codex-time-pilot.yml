@@ -4,8 +4,22 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      previous_run:
+        description: 初始预览的 main CI 运行编号（双预览模式需填写全部四项）
+        type: string
+      previous_commit:
+        description: 初始预览的完整 main 提交 SHA
+        type: string
+      candidate_run:
+        description: 升级预览的 main CI 运行编号
+        type: string
+      candidate_commit:
+        description: 升级预览的完整 main 提交 SHA
+        type: string
 permissions:
   contents: read
+  actions: read
 
 jobs:
   lifecycle:
@@ -23,25 +37,54 @@ jobs:
           node-version: "24.22.1"
       - name: 安装锁定的 Codex CLI
         run: npm ci --prefix pilot/codex_time --ignore-scripts --no-audit --no-fund
-      - name: 从本提交构建网关并准备两个第三方版本
+      - name: 构建本提交的策略检查器并装入独立环境
         shell: bash
         run: |
           set -euo pipefail
           python -m pip wheel --no-deps --wheel-dir artifacts/pilot-wheels .
-          python -X utf8 pilot/codex_time/prepare.py --root artifacts/pilot-env --wheel artifacts/pilot-wheels/*.whl
-      - name: Codex 宿主安装、升级和回退
-        run: >-
-          python -X utf8 -m pilot.codex_time.run
-          --codex pilot/codex_time/node_modules/.bin/codex
-          --environment artifacts/pilot-env/environment.json
-          --output-dir artifacts/codex-time-lifecycle
-          --candidate-policy-template pilot/codex_time/policy.json
-      - name: 扩权候选等待审阅时复验原配置和业务
+          python -m venv artifacts/policy-checker
+          artifacts/policy-checker/bin/python -m pip install --no-index --no-deps artifacts/pilot-wheels/*.whl
+      - name: 从本提交构建网关并准备两个第三方版本
+        if: ${{ !inputs.previous_run && !inputs.previous_commit && !inputs.candidate_run && !inputs.candidate_commit }}
         shell: bash
         run: |
           set -euo pipefail
+          python -X utf8 pilot/codex_time/prepare.py --root artifacts/pilot-env --wheel artifacts/pilot-wheels/*.whl
+      - name: 从两次指定的成功构建下载并安装已核验网关
+        if: ${{ inputs.previous_run || inputs.previous_commit || inputs.candidate_run || inputs.candidate_commit }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS_RUN: ${{ inputs.previous_run }}
+          PREVIOUS_COMMIT: ${{ inputs.previous_commit }}
+          CANDIDATE_RUN: ${{ inputs.candidate_run }}
+          CANDIDATE_COMMIT: ${{ inputs.candidate_commit }}
+        shell: bash
+        run: |
+          python -X utf8 -m pilot.codex_time.prepare --root artifacts/pilot-env \
+            --previous-preview "$PREVIOUS_RUN" "$PREVIOUS_COMMIT" \
+            --candidate-preview "$CANDIDATE_RUN" "$CANDIDATE_COMMIT"
+      - name: Codex 宿主安装、升级和回退
+        env:
+          PREVIOUS_RUN: ${{ inputs.previous_run }}
+        shell: bash
+        run: |
+          options=(--policy-check-python "$GITHUB_WORKSPACE/artifacts/policy-checker/bin/python")
+          if [[ -n "$PREVIOUS_RUN" ]]; then options+=(--require-verified-gateways); fi
+          python -X utf8 -m pilot.codex_time.run "${options[@]}" \
+            --codex pilot/codex_time/node_modules/.bin/codex \
+            --environment artifacts/pilot-env/environment.json \
+            --output-dir artifacts/codex-time-lifecycle \
+            --candidate-policy-template pilot/codex_time/policy.json
+      - name: 扩权候选等待审阅时复验原配置和业务
+        env:
+          PREVIOUS_RUN: ${{ inputs.previous_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          options=(--policy-check-python "$GITHUB_WORKSPACE/artifacts/policy-checker/bin/python")
+          if [[ -n "$PREVIOUS_RUN" ]]; then options+=(--require-verified-gateways); fi
           code=0
-          python -X utf8 -m pilot.codex_time.run \
+          python -X utf8 -m pilot.codex_time.run "${options[@]}" \
             --codex pilot/codex_time/node_modules/.bin/codex \
             --environment artifacts/pilot-env/environment.json \
             --output-dir artifacts/codex-time-policy-review \
@@ -70,6 +113,41 @@ jobs:
           assert hashlib.sha256(config).hexdigest() == installed["config_sha256"] == retained["config_sha256"]
           assert (root / "policy.json").read_bytes() == Path("pilot/codex_time/policy.json").read_bytes()
           PY
+      - name: 在新的试点项目中验证候选启动失败后的宿主恢复
+        env:
+          PREVIOUS_RUN: ${{ inputs.previous_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          output=artifacts/codex-time-recovery
+          test ! -e "$output"
+          options=()
+          if [[ -n "$PREVIOUS_RUN" ]]; then options+=(--require-verified-gateways); fi
+          status=0
+          python -X utf8 -m pilot.codex_time.run "${options[@]}" --simulate-candidate-startup-failure \
+            --codex pilot/codex_time/node_modules/.bin/codex \
+            --environment artifacts/pilot-env/environment.json --output-dir "$output" || status=$?
+          python -X utf8 -m pilot.codex_time.check_recovery --runner-exit-code "$status" \
+            --environment artifacts/pilot-env/environment.json --output-dir "$output"
+      - name: 验证通过检查的候选策略在网关启动失败后恢复
+        env:
+          PREVIOUS_RUN: ${{ inputs.previous_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          output=artifacts/codex-time-policy-recovery
+          test ! -e "$output"
+          options=(--policy-check-python "$GITHUB_WORKSPACE/artifacts/policy-checker/bin/python")
+          if [[ -n "$PREVIOUS_RUN" ]]; then options+=(--require-verified-gateways); fi
+          template=artifacts/equivalent-candidate-policy.json
+          python -m json.tool --sort-keys pilot/codex_time/policy.json "$template"
+          if cmp -s "$template" pilot/codex_time/policy.json; then exit 1; fi
+          status=0
+          python -X utf8 -m pilot.codex_time.run "${options[@]}" --candidate-policy-template "$template" --simulate-candidate-startup-failure \
+            --codex pilot/codex_time/node_modules/.bin/codex \
+            --environment artifacts/pilot-env/environment.json --output-dir "$output" || status=$?
+          python -X utf8 -m pilot.codex_time.check_recovery --runner-exit-code "$status" --candidate-policy-template "$template" \
+            --environment artifacts/pilot-env/environment.json --output-dir "$output"
       - name: 保存阶段证据
         if: always()
         uses: actions/upload-artifact@v7.0.2
@@ -77,10 +155,28 @@ jobs:
           name: codex-time-lifecycle
           path: artifacts/codex-time-lifecycle/report.json
           if-no-files-found: warn
+      - name: 保存故障演练的独立报告
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: codex-time-recovery
+          path: |
+            artifacts/codex-time-recovery/report.json
+            artifacts/codex-time-recovery/candidate-exit.txt
+          if-no-files-found: warn
       - name: 保存候选策略审阅与原配置复验证据
         if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
           name: codex-time-policy-review
           path: artifacts/codex-time-policy-review/report.json
+          if-no-files-found: warn
+      - name: 保存策略检查和故障恢复的组合报告
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: codex-time-policy-recovery
+          path: |
+            artifacts/codex-time-policy-recovery/report.json
+            artifacts/codex-time-policy-recovery/candidate-exit.txt
           if-no-files-found: warn
