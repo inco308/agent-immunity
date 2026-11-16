@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import zipfile
 
 
@@ -52,6 +53,56 @@ def verify_members(package, runtime):
         raise ValueError(f"{package.name} 归档内容不符：缺少 {sorted(missing)}，多出 {sorted(extra)}")
 
 
+def probe_entry_points(scripts, python, work, env):
+    """运行已安装的检查器，通过真实上游完成 MCP 初始化并确认连接已就绪。"""
+    suffix = ".exe" if os.name == "nt" else ""
+    policy = work / "policy.json"
+    policy.write_text(json.dumps({"version": 1, "workspace": ".", "tools": {}}), encoding="utf-8")
+    checked = subprocess.run([scripts / ("agent-immunity-check" + suffix), "--policy", policy, "--json"],
+                             cwd=work, env=env, capture_output=True, check=True, timeout=60)
+    verdict = json.loads(checked.stdout)
+    if verdict.get("status") != "pass" or verdict.get("registered_tools") != 0:
+        raise ValueError("安装后的策略体检失败")
+
+    protocol = "2025-06-18"
+    command = [scripts / ("agent-immunity" + suffix), "--policy", policy, "--", python, "-I",
+               REPO / "examples" / "local_tools.py"]
+    with subprocess.Popen(command, cwd=work, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                          stderr=subprocess.DEVNULL) as proxy:
+        def send(method, **fields):
+            frame = {"jsonrpc": "2.0", "method": method, **fields}
+            proxy.stdin.write((json.dumps(frame) + "\n").encode())
+            proxy.stdin.flush()
+
+        def request(seq, method, params):
+            send(method, id=seq, params=params)
+            reply = json.loads(proxy.stdout.readline(65536))
+            if reply.get("jsonrpc") != "2.0" or reply.get("id") != seq or "error" in reply:
+                raise ValueError(f"安装后的代理未正确响应 {method}")
+            return reply["result"]
+
+        # 同时限制初始化、工具发现和退出，以免上游异常时一直阻塞在 readline。
+        timeout = threading.Timer(60, proxy.kill)
+        timeout.start()
+        try:
+            hello = request(1, "initialize", {"protocolVersion": protocol, "capabilities": {},
+                                               "clientInfo": {"name": "install-check", "version": "1"}})
+            if (hello.get("protocolVersion") != protocol or hello.get("serverInfo", {}).get("name") != "local-tools-example"
+                    or not isinstance(hello.get("capabilities", {}).get("tools"), dict)):
+                raise ValueError("安装后的代理未与本地示例上游完成初始化")
+            send("notifications/initialized")
+            if request(2, "tools/list", {}) != {"tools": []} or request(3, "ping", {}) != {}:
+                raise ValueError("安装后的代理未通过工具目录和 ping 核对")
+            proxy.stdin.close()
+            if proxy.wait() != 0:
+                raise ValueError("安装后的代理未正常关闭")
+        finally:
+            if proxy.poll() is None:
+                proxy.kill()
+            timeout.cancel()
+    return {"policy_check": "pass", "protocol_version": protocol, "proxy_ping": True}
+
+
 def smoke_install(package, work):
     """两个发行文件使用不同的全新 venv；工作目录不含源码或其他可导入副本。"""
     work.mkdir()
@@ -71,17 +122,7 @@ def smoke_install(package, work):
     run([scripts / ("agent-immunity-check.exe" if windows else "agent-immunity-check"), "--help"])
     run([python, "-I", "-X", "utf8", "-m", "agent_immunity.doctor", "--help"])
     run([python, "-I", "-X", "utf8", "-m", "agent_immunity.benchmark.run_evaluation", "--output", "benchmark.json", "--repeats", "2"])
-    # 收到协议响应能同时验证代理入口、策略装载及子进程启动。
-    (work / "policy.json").write_text(json.dumps({"version": 1, "workspace": ".", "tools": {}}), encoding="utf-8")
-    checked = run([scripts / ("agent-immunity-check.exe" if windows else "agent-immunity-check"),
-                   "--policy", "policy.json", "--json"], stdout=subprocess.PIPE)
-    if json.loads(checked.stdout)["status"] != "pass":
-        raise ValueError(f"{package.name} 安装后的策略体检失败")
-    proxy = scripts / ("agent-immunity.exe" if windows else "agent-immunity")
-    reply = run([proxy, "--policy", "policy.json", "--", python, "-I", "-c", "import sys; sys.stdin.buffer.read()"],
-                input=b'{"jsonrpc":"2.0","id":1,"method":"ping"}\n', stdout=subprocess.PIPE)
-    if json.loads(reply.stdout) != {"jsonrpc": "2.0", "id": 1, "result": {}}:
-        raise ValueError(f"{package.name} 未返回预期的 ping 响应")
+    probe_entry_points(scripts, python, work, env)
 
 
 def main():

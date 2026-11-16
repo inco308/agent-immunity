@@ -70,6 +70,20 @@ python -X utf8 -m scripts.recovery_bundle verify --bundle artifacts/recovery-438
 
 离线命令重新计算整包、内层归档和两个 wheel 的摘要，核对候选退出码与报告中的实际恢复结果，输出采集时的在线核验时间和恢复附表。它验证留存内容与当时记录的一致性。要确认 GitHub 上当前的状态，需要重新在线取证。清单里的时间来自采集机时钟；若包与独立摘要都被替换，单凭这两份文件无法证明原始来源。
 
+### 离线试装指定的网关构建
+
+要验证留存的 wheel 仍可使用，在包含本仓库脚本的机器上准备带 `venv` 和 `ensurepip` 的 Python 3.10+，使用留存时单独记录的整包 SHA-256。下面的命令选取恢复报告中的原网关；将 `previous` 换为 `candidate` 即可验收候选网关。
+
+```text
+python -X utf8 -m scripts.recovery_bundle check-install --bundle artifacts/recovery-43823960415.zip --sha256 <留存时独立记录的64位摘要> --role previous
+```
+
+工具先复核整个留存包及两份构建收据，再将选中的 wheel 安装到一次性虚拟环境。pip 只使用该本地文件。验收将实际安装的版本、发行元数据摘要和每个运行文件与所选构建比对，随后调用已安装的策略检查器，并通过已安装的代理与仓库中的本地示例上游完成 MCP 初始化、工具发现和 `ping`。
+
+成功时退出码为 0，标准输出是一份 JSON 收据，可重定向到文件。两份历史构建同为 `0.3.0a1`，使用 `source_commit`、`wheel_sha256` 和 `metadata_sha256` 区分。报告分别记录上次在线核验时间 `verified_at` 和本次安装验收时间 `checked_at`。临时环境会在命令结束时清理；生产宿主的注册和业务回退仍按对应的宿主演练验收。
+
+2026-11-16 在 Windows 11 x64（CPython 3.12.10）和 WSL2 Ubuntu 26.04 x86_64（CPython 3.14.4）分别试装了原构建与候选构建，四次均通过。Windows 使用本地 wheel 和禁用索引的 pip，WSL2 使用仅有回环接口、无外部路由的 Linux 网络命名空间。[四份实际安装收据](../results/recovery/2026-11-16-retained-install.json)
+
 ### 核对核心包的安装环境
 
 核心包行有两种证据来源。历史作业的安装验收通过时，行中列出运行器标签和 Python 系列。有独立安装报告的作业，还会列出 wheel 与源码包各自测到的系统、架构和 Python 补丁版本。两份环境相同时合并显示，有差异时按包分别显示。

@@ -1,15 +1,18 @@
-"""在线留存一次双构建演练的原始归档，或凭独立保存的 SHA-256 离线复核。"""
+"""在线留存双构建演练证据，凭独立保存的摘要离线复核或验收指定网关安装。"""
 import argparse
 from datetime import datetime, timezone
 import hashlib
 import json
 import os
 from pathlib import Path
+import platform
+import subprocess
 import sys
 import tempfile
 import zipfile
 
 from .recovery_matrix import digest, render_recovery
+from .retained_install import check_retained_wheel
 from .support_evidence import (
     ARCHIVE_LIMIT, RECOVERY_STEPS, REPOSITORY, fetch_recovery_evidence, read_artifact_files, version,
 )
@@ -20,8 +23,8 @@ MANIFEST_LIMIT = 64 * 1024
 BUNDLE_LIMIT = 3 * ARCHIVE_LIMIT + MANIFEST_LIMIT + 4096
 
 
-def _summary(manifest, contents):
-    """验证归档内部的运行、构建和业务关联，生成与在线矩阵相同的恢复附表。"""
+def _validate_contents(manifest, contents):
+    """核对报告和两个构建，并返回从同一份已验字节读出的 wheel。"""
     if (type(manifest["schema_version"]) is not int or manifest["schema_version"] != 1
             or manifest["repository"] != REPOSITORY or set(manifest["artifacts"]) != set(ROLES)):
         raise ValueError("留存包的版本、仓库或产物集合不符")
@@ -39,18 +42,20 @@ def _summary(manifest, contents):
     if files["candidate-exit.txt"] not in (b"1\n", b"1\r\n"):
         raise ValueError("候选网关的实际退出码不符")
     report = json.loads(files["report.json"])
+    wheels = {}
     for role in ("previous", "candidate"):
         build = report["upstreams"][role]["gateway"]
         wheel = f"agent_immunity-{version(build['version'])}-py3-none-any.whl"
         payload = read_artifact_files(contents[role], {wheel: ARCHIVE_LIMIT})
         if build["artifact_id"] != receipts[role]["id"] or hashlib.sha256(payload[wheel]).hexdigest() != build["wheel_sha256"]:
             raise ValueError(f"{role} 的 wheel 与恢复报告收据不符")
+        wheels[role] = (wheel, payload[wheel], build)
 
     candidate = report["upstreams"]["candidate"]["gateway"]
     table = render_recovery(manifest["recovery_commit"], manifest["recovery_run"], manifest["job"], report,
                             receipts["recovery"]["id"], matrix_commit=candidate["commit"],
                             verify_run=candidate["run_id"], gateway_version=candidate["version"])
-    return f"上次在线核验时间（采集机 UTC）为 {timestamp}。\n\n{table}"
+    return f"上次在线核验时间（采集机 UTC）为 {timestamp}。\n\n{table}", wheels
 
 
 def capture(commit, run, dest):
@@ -71,7 +76,7 @@ def capture(commit, run, dest):
         "artifacts": {role: {"id": item["id"], "sha256": item["sha256"]} for role, item in archives.items()},
     }
     contents = {role: item["data"] for role, item in archives.items()}
-    _summary(manifest, contents)
+    _validate_contents(manifest, contents)
     dest.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=dest.parent, delete=False) as stream:
         temporary = Path(stream.name)
@@ -92,7 +97,7 @@ def capture(commit, run, dest):
     return checksum
 
 
-def verify(dest, expected_sha256):
+def _read_verified(dest, expected_sha256):
     checksum = digest(expected_sha256.lower())
     dest = Path(dest)
     if not dest.is_file():
@@ -105,9 +110,37 @@ def verify(dest, expected_sha256):
     members = read_artifact_files(data, limits, exact=True)
     try:
         manifest = json.loads(members["manifest.json"])
-        return _summary(manifest, {role: members[role + ".zip"] for role in ROLES})
+        summary, wheels = _validate_contents(manifest, {role: members[role + ".zip"] for role in ROLES})
+        return manifest, summary, wheels
     except (KeyError, TypeError, AttributeError, RecursionError) as exc:
         raise ValueError("留存包清单或报告字段无效") from exc
+
+
+def verify(dest, expected_sha256):
+    _, summary, _ = _read_verified(dest, expected_sha256)
+    return summary
+
+
+def check_install(bundle, sha256, role):
+    if role not in ("previous", "candidate"):
+        raise ValueError("请选择 previous 或 candidate 网关")
+    manifest, _, wheels = _read_verified(bundle, sha256)
+    filename, data, source = wheels[role]
+    with tempfile.TemporaryDirectory(prefix="retained-wheel-") as temporary:
+        root = Path(temporary).resolve()
+        wheel_path = root / filename
+        wheel_path.write_bytes(data)
+        work = root / "install"
+        work.mkdir()
+        observed = check_retained_wheel(wheel_path, work, source)
+    return {
+        "schema_version": 1, "scope": "RETAINED_WHEEL_INSTALL", "status": "passed", "role": role,
+        "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "bundle_sha256": sha256.lower(), "verified_at": manifest["verified_at"],
+        "recovery_run": manifest["recovery_run"], "recovery_commit": manifest["recovery_commit"],
+        "source_commit": source["commit"], "source_run": source["run_id"], "source_artifact": source["artifact_id"],
+        "system": platform.system(), "python": platform.python_version(), **observed,
+    }
 
 
 def main(argv=None):
@@ -118,15 +151,21 @@ def main(argv=None):
     collect.add_argument("--run", required=True, type=int, help="双构建手动演练的运行编号")
     collect.add_argument("--output", required=True, type=Path, help="新建的本地 ZIP 路径")
     offline = modes.add_parser("verify", help="复核本地留存包并显示在线核验时间")
-    offline.add_argument("--bundle", required=True, type=Path)
-    offline.add_argument("--sha256", required=True, help="留存时单独记录的整个包的 SHA-256")
+    install = modes.add_parser("check-install", help="在全新临时环境中离线安装指定构建并验收其入口")
+    install.add_argument("--role", choices=("previous", "candidate"), required=True, help="恢复报告记录的网关角色")
+    for command in (offline, install):
+        command.add_argument("--bundle", required=True, type=Path)
+        command.add_argument("--sha256", required=True, help="留存时单独记录的整个包的 SHA-256")
     args = parser.parse_args(argv)
     try:
         if args.mode == "capture":
             print(capture(args.commit, args.run, args.output))
-        else:
+        elif args.mode == "verify":
             print(verify(args.bundle, args.sha256), end="")
-    except (ValueError, OSError) as exc:
+        else:
+            result = check_install(args.bundle, args.sha256, args.role)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+    except (ValueError, OSError, subprocess.SubprocessError, zipfile.BadZipFile) as exc:
         print(f"恢复证据核验失败：{exc}", file=sys.stderr)
         return 1
     return 0

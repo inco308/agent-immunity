@@ -32,6 +32,19 @@ def members(data):
         return {name: zipped.read(name) for name in zipped.namelist()}
 
 
+def replace_member(raw_bundle, role, filename, replacement):
+    files = members(raw_bundle)
+    inner_zip = role + ".zip"
+    inner = members(files[inner_zip])
+    inner[filename] = replacement
+    files[inner_zip] = archive(inner)
+    # 即使包级摘要和清单也被重新计算，报告中的业务与构建收据仍需能被独立核对。
+    manifest = json.loads(files["manifest.json"])
+    manifest["artifacts"][role]["sha256"] = sha(files[inner_zip])
+    files["manifest.json"] = json.dumps(manifest).encode()
+    return archive(files)
+
+
 class RecoveryBundleTests(unittest.TestCase):
     def setUp(self):
         temp = temporary_directory()
@@ -116,15 +129,7 @@ class RecoveryBundleTests(unittest.TestCase):
             ("candidate", "agent_immunity-0.3.0a1-py3-none-any.whl", b"another wheel"),
         ):
             with self.subTest(role=role):
-                files = members(original)
-                inner = members(files[role + ".zip"])
-                inner[filename] = replacement
-                files[role + ".zip"] = archive(inner)
-                # 即便包级摘要和清单都随之更新，内部证据仍须各自符合报告约定。
-                manifest = json.loads(files["manifest.json"])
-                manifest["artifacts"][role]["sha256"] = sha(files[role + ".zip"])
-                files["manifest.json"] = json.dumps(manifest).encode()
-                rebuilt = archive(files)
+                rebuilt = replace_member(original, role, filename, replacement)
                 self.dest.write_bytes(rebuilt)
                 with self.assertRaises(ValueError):
                     bundle.verify(self.dest, sha(rebuilt))
@@ -139,3 +144,71 @@ class RecoveryBundleTests(unittest.TestCase):
             bundle.capture(PILOT_COMMIT, RUN, self.dest)
         self.assertEqual(self.dest.read_bytes(), b"existing capture")
         self.assertEqual(list(self.dest.parent.iterdir()), [self.dest])
+
+    def test_install_uses_selected_receipt_and_only_original_verified_bytes(self):
+        anchor = self.capture()
+        original = self.dest.read_bytes()
+        original_open = Path.open
+        filename = "agent_immunity-0.3.0a1-py3-none-any.whl"
+
+        def swap_after_read(path, *args, **kwargs):
+            if path == self.dest and (args[0] if args else kwargs.get("mode")) == "rb":
+                with original_open(path, "rb") as src:
+                    snapshot = src.read()
+                with original_open(path, "wb") as out:
+                    out.write(b"replaced after the first read")
+                return io.BytesIO(snapshot)
+            return original_open(path, *args, **kwargs)
+
+        for role in ("previous", "candidate"):
+            with self.subTest(role=role):
+                self.dest.write_bytes(original)
+                expected = self.report["upstreams"][role]["gateway"]
+                wheel_bytes = members(self.archives[role]["data"])[filename]
+
+                def inspect(wheel_path, work, receipt):
+                    self.assertEqual(receipt, expected)
+                    self.assertEqual(wheel_path.name, filename)
+                    self.assertEqual(wheel_path.read_bytes(), wheel_bytes)
+                    self.assertEqual(sha(wheel_bytes), receipt["wheel_sha256"])
+                    self.assertTrue(work.is_dir())
+                    observed = {key: receipt[key] for key in ("version", "wheel_sha256", "metadata_sha256", "runtime_files")}
+                    return {**observed, "policy_check": "pass", "protocol_version": "2025-06-18", "proxy_ping": True}
+
+                with patch.object(Path, "open", swap_after_read), \
+                        patch.object(bundle, "check_retained_wheel", side_effect=inspect) as install:
+                    result = bundle.check_install(self.dest, anchor, role)
+                install.assert_called_once()
+                self.assertEqual((result["role"], result["bundle_sha256"]), (role, anchor))
+                self.assertEqual((result["source_commit"], result["source_run"], result["source_artifact"]),
+                                 (expected["commit"], expected["run_id"], expected["artifact_id"]))
+                self.assertEqual(result["wheel_sha256"], expected["wheel_sha256"])
+                self.assertFalse(install.call_args.args[0].exists())
+                self.assertEqual(self.dest.read_bytes(), b"replaced after the first read")
+
+    def test_invalid_evidence_or_role_rejected_before_wheel_is_staged(self):
+        anchor = self.capture()
+        original = self.dest.read_bytes()
+        filename = "agent_immunity-0.3.0a1-py3-none-any.whl"
+        wrong_wheel = replace_member(original, "previous", filename, b"unselected wheel mismatch")
+        bad_report = json.dumps({**self.report, "status": "passed"}).encode()
+        wrong_report = replace_member(original, "recovery", "report.json", bad_report)
+        original_open = Path.open
+
+        def reject_wheel_write(path, mode="r", *args, **kwargs):
+            if path.suffix == ".whl" and any(flag in mode for flag in "wax+"):
+                self.fail("证据未通过校验时尝试写出 wheel")
+            return original_open(path, mode, *args, **kwargs)
+
+        for label, data, checksum, role in (
+            ("错误外部摘要", original, "0" * 64, "candidate"),
+            ("未选中的构建失配", wrong_wheel, sha(wrong_wheel), "candidate"),
+            ("报告语义有误", wrong_report, sha(wrong_report), "previous"),
+            ("未知角色", original, anchor, "other"),
+        ):
+            with self.subTest(case=label):
+                self.dest.write_bytes(data)
+                with patch.object(Path, "open", reject_wheel_write), patch.object(bundle, "check_retained_wheel") as install:
+                    with self.assertRaises(ValueError):
+                        bundle.check_install(self.dest, checksum, role)
+                install.assert_not_called()

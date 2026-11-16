@@ -1,0 +1,119 @@
+{
+  "environments": [
+    {
+      "environment": "Windows 11 x64",
+      "network_evidence": {
+        "policy": "local_wheels_only",
+        "os_network_isolation": false
+      },
+      "observations": [
+        {
+          "schema_version": 1,
+          "scope": "RETAINED_WHEEL_INSTALL",
+          "status": "passed",
+          "role": "previous",
+          "checked_at": "2026-11-16T10:30:35Z",
+          "bundle_sha256": "0a6b2eb39b10a5931e4189e810507bbc88239eb6818eeef902050ddb4201db8f",
+          "verified_at": "2026-11-16T09:27:28Z",
+          "recovery_run": 43823960415,
+          "recovery_commit": "895c07a4f9763822ce1810dceed5ba4b40fb49e4",
+          "source_commit": "8568e98c5d458b8f25dcf68cc3e1361d5675c90d",
+          "source_run": 43693563690,
+          "source_artifact": 14153586472,
+          "system": "Windows",
+          "python": "3.12.10",
+          "wheel_sha256": "350a623558e1989f9668db094dad6bb01ac02e34734931f7423c8970b1e81120",
+          "version": "0.3.0a1",
+          "runtime_files": 19,
+          "metadata_sha256": "7168a4560e5367a8bb1afa591fa4b07fd5734e472f9420281061149ab356a42b",
+          "policy_check": "pass",
+          "protocol_version": "2025-06-18",
+          "proxy_ping": true
+        },
+        {
+          "schema_version": 1,
+          "scope": "RETAINED_WHEEL_INSTALL",
+          "status": "passed",
+          "role": "candidate",
+          "checked_at": "2026-11-16T10:30:56Z",
+          "bundle_sha256": "0a6b2eb39b10a5931e4189e810507bbc88239eb6818eeef902050ddb4201db8f",
+          "verified_at": "2026-11-16T09:27:28Z",
+          "recovery_run": 43823960415,
+          "recovery_commit": "895c07a4f9763822ce1810dceed5ba4b40fb49e4",
+          "source_commit": "7328ca6949dcade4bbf186c827c3eee9c39fab4e",
+          "source_run": 43694645291,
+          "source_artifact": 14153623428,
+          "system": "Windows",
+          "python": "3.12.10",
+          "wheel_sha256": "b44de0a50ae74b79cf50e80145b6df08d5f81ccf1ba0b21a631d3c88599781bf",
+          "version": "0.3.0a1",
+          "runtime_files": 19,
+          "metadata_sha256": "407d8fb23b52eec0af6c82c0a8915f2a9af117fbd44e2ce5ec102a73bfd0732d",
+          "policy_check": "pass",
+          "protocol_version": "2025-06-18",
+          "proxy_ping": true
+        }
+      ]
+    },
+    {
+      "environment": "WSL2 Ubuntu 26.04 LTS x86_64",
+      "network_evidence": {
+        "policy": "new_linux_network_namespace",
+        "os_network_isolation": true,
+        "interfaces": [
+          "lo"
+        ],
+        "ipv4_routes": 0,
+        "udp_route_lookup": "ENETUNREACH"
+      },
+      "observations": [
+        {
+          "schema_version": 1,
+          "scope": "RETAINED_WHEEL_INSTALL",
+          "status": "passed",
+          "role": "previous",
+          "checked_at": "2026-11-16T10:30:24Z",
+          "bundle_sha256": "0a6b2eb39b10a5931e4189e810507bbc88239eb6818eeef902050ddb4201db8f",
+          "verified_at": "2026-11-16T09:27:28Z",
+          "recovery_run": 43823960415,
+          "recovery_commit": "895c07a4f9763822ce1810dceed5ba4b40fb49e4",
+          "source_commit": "8568e98c5d458b8f25dcf68cc3e1361d5675c90d",
+          "source_run": 43693563690,
+          "source_artifact": 14153586472,
+          "system": "Linux",
+          "python": "3.14.4",
+          "wheel_sha256": "350a623558e1989f9668db094dad6bb01ac02e34734931f7423c8970b1e81120",
+          "version": "0.3.0a1",
+          "runtime_files": 19,
+          "metadata_sha256": "7168a4560e5367a8bb1afa591fa4b07fd5734e472f9420281061149ab356a42b",
+          "policy_check": "pass",
+          "protocol_version": "2025-06-18",
+          "proxy_ping": true
+        },
+        {
+          "schema_version": 1,
+          "scope": "RETAINED_WHEEL_INSTALL",
+          "status": "passed",
+          "role": "candidate",
+          "checked_at": "2026-11-16T10:30:27Z",
+          "bundle_sha256": "0a6b2eb39b10a5931e4189e810507bbc88239eb6818eeef902050ddb4201db8f",
+          "verified_at": "2026-11-16T09:27:28Z",
+          "recovery_run": 43823960415,
+          "recovery_commit": "895c07a4f9763822ce1810dceed5ba4b40fb49e4",
+          "source_commit": "7328ca6949dcade4bbf186c827c3eee9c39fab4e",
+          "source_run": 43694645291,
+          "source_artifact": 14153623428,
+          "system": "Linux",
+          "python": "3.14.4",
+          "wheel_sha256": "b44de0a50ae74b79cf50e80145b6df08d5f81ccf1ba0b21a631d3c88599781bf",
+          "version": "0.3.0a1",
+          "runtime_files": 19,
+          "metadata_sha256": "407d8fb23b52eec0af6c82c0a8915f2a9af117fbd44e2ce5ec102a73bfd0732d",
+          "policy_check": "pass",
+          "protocol_version": "2025-06-18",
+          "proxy_ping": true
+        }
+      ]
+    }
+  ]
+}
