@@ -337,6 +337,36 @@ class RecoveryEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "wheel"):
             self.fetch()
 
+    def test_retain_original_archives_once_after_final_run_check(self):
+        captured = {}
+        for rerun in (False, True):
+            with self.subTest(rerun=rerun):
+                downloads = []
+
+                def download(args):
+                    endpoint = args[-1]
+                    downloads.append(endpoint)
+                    if rerun and len(downloads) == 3:
+                        self.dispatch["run_attempt"] = 2
+                    return self.archives[endpoint]
+
+                with patch.object(evidence, "_api", side_effect=lambda key, **_: self.routes[key]), \
+                        patch.object(evidence, "_gh", side_effect=download):
+                    if rerun:
+                        captured = {"recovery": "existing"}
+                        with self.assertRaises(ValueError):
+                            evidence.fetch_recovery_evidence(COMMIT, 37, archives=captured)
+                        self.assertEqual(captured, {"recovery": "existing"})
+                    else:
+                        self.assertEqual(evidence.fetch_recovery_evidence(COMMIT, 37, archives=captured),
+                                         (self.job, self.report, 57))
+                        self.assertEqual(set(captured), {"recovery", "previous", "candidate"})
+                        for role, number in (("recovery", 57), ("previous", 51), ("candidate", 52)):
+                            raw = self.archives[f"repos/{evidence.REPOSITORY}/actions/artifacts/{number}/zip"]
+                            self.assertEqual(captured[role], {"id": number, "sha256": hashlib.sha256(raw).hexdigest(),
+                                                              "data": raw})
+                self.assertCountEqual(downloads, self.archives.keys())
+
     def test_wrong_marker_single_gateway_and_skipped_download_fail(self):
         self.policy_archive(marker=b"2\n")
         with self.assertRaisesRegex(ValueError, "退出码"):
@@ -348,6 +378,13 @@ class RecoveryEvidenceTests(unittest.TestCase):
         self.job["steps"][0]["conclusion"] = "skipped"
         with self.assertRaises(ValueError):
             self.fetch()
+
+    def test_exact_member_set_is_optional_for_original_archives(self):
+        raw = self.archives[f"repos/{evidence.REPOSITORY}/actions/artifacts/57/zip"]
+        members = {"candidate-exit.txt": 3}
+        self.assertEqual(evidence.read_artifact_files(raw, members), {"candidate-exit.txt": b"1\n"})
+        with self.assertRaisesRegex(ValueError, "额外成员"):
+            evidence.read_artifact_files(raw, members, exact=True)
 
     def test_run_artifact_mismatch_and_reruns_fail(self):
         meta = self.routes[f"{evidence.RUNS_API}/32/artifacts?name=agent-immunity-dist&per_page=100"]["artifacts"][0]
