@@ -5,10 +5,10 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
-import tomllib
 import zipfile
 
 
@@ -20,6 +20,8 @@ SDK = "1.30.0"
 
 
 def check_wheel(wheel):
+    import tomllib
+
     with (REPO / "pyproject.toml").open("rb") as stream:
         version = tomllib.load(stream)["project"]["version"]
     if wheel.name != f"agent_immunity-{version}-py3-none-any.whl":
@@ -81,6 +83,26 @@ def prepare(root, wheel):
     if sys.version_info[:2] != (3, 12):
         raise ValueError("请使用 Python 3.12 运行环境准备脚本")
     version, digest = check_wheel(wheel)
+    return _prepare_environment(root, wheel, version, digest)
+
+
+def installed_identity(python, wheel, version, digest, work, env):
+    """用实际网关解释器逐文件核对安装树、发行元数据及 pip 的安装来源。"""
+    result = subprocess.run([python, "-I", "-X", "utf8", str(HERE / "wheel_identity.py"),
+                             "--wheel", str(wheel), "--sha256", digest, "--version", version],
+                            cwd=work, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            check=True, timeout=60)
+    identity = json.loads(result.stdout)
+    if (not isinstance(identity, dict) or identity.get("version") != version or identity.get("wheel_sha256") != digest
+            or type(identity.get("runtime_files")) is not int or identity["runtime_files"] < 1
+            or not isinstance(identity.get("metadata_sha256"), str)
+            or not re.fullmatch(r"[a-f0-9]{64}", identity["metadata_sha256"])):
+        raise ValueError("网关的安装身份回执与准备的 wheel 不一致")
+    return identity
+
+
+def _prepare_environment(root, wheel, version, digest, *, preview=None):
+    root = Path(root).resolve()
     root.mkdir(parents=True, exist_ok=True)
     descriptor = root / "environment.json"
     if descriptor.exists():
@@ -94,21 +116,38 @@ def prepare(root, wheel):
     work.mkdir()
     temporary = generation / "tmp"
     temporary.mkdir()
+    exclude = {"VIRTUAL_ENV", "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
+               "ACTIONS_RUNTIME_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"}
     env = {k: v for k, v in os.environ.items()
-           if not k.upper().startswith(("PIP_", "PYTHON")) and k.upper() != "VIRTUAL_ENV"}
+           if not k.upper().startswith(("PIP_", "PYTHON")) and k.upper() not in exclude}
+    if preview is not None:
+        # gh 只在核验来源时使用；安装进程使用独立的用户配置目录。
+        allowed = {"PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "SYSTEMDRIVE", "COMSPEC",
+                   "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMDATA", "LANG", "LC_ALL",
+                   "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE"}
+        env = {k: v for k, v in env.items() if k.upper() in allowed}
+        env.update(HOME=str(temporary), USERPROFILE=str(temporary), APPDATA=str(temporary),
+                   LOCALAPPDATA=str(temporary), GH_CONFIG_DIR=str(temporary / "gh"))
     env.update(PIP_CONFIG_FILE=os.devnull, PYTHONUTF8="1", TMP=str(temporary),
                TMPDIR=str(temporary), TEMP=str(temporary))
     pip = ["--disable-pip-version-check", "--no-input", "--cache-dir", str(root / "pip-cache"),
            "--timeout", "30", "--retries", "2"]
     versions = {"gateway": version, **UPSTREAM}
     result = {"schema_version": 1, "scope": SCOPE, "versions": {**versions, "mcp": SDK}, "gateway_wheel_sha256": digest}
+    if preview is not None:
+        receipt, wheel_bytes = preview
+        wheel = generation / wheel.name
+        wheel.write_bytes(wheel_bytes)
+        result["preview_pair"] = receipt
+    lock = generation / "gateway.lock"
+    lock.write_text(f"{wheel.absolute().as_uri()} --hash=sha256:{digest}\n", encoding="utf-8")
     for role, expected in versions.items():
         venv = generation / role
         print(f"准备 {role} {expected}", flush=True)
         run([sys.executable, "-I", "-m", "venv", str(venv)], work, env, timeout=120)
         python = interpreter(venv)
         if role == "gateway":
-            install = ["--no-index", str(wheel)]
+            install = ["--no-index", "--no-deps", "--require-hashes", "-r", str(lock)]
         else:
             install = ["--index-url", "https://pypi.org/simple", "--only-binary=:all:", "--require-hashes",
                        "-r", str(HERE / (role + ".lock"))]
@@ -116,6 +155,7 @@ def prepare(root, wheel):
         run([python, "-I", "-m", "pip", *pip, "check"], work, env, timeout=60)
         run([python, "-I", "-X", "utf8", "-c", INSPECT, role, expected, SDK, str(venv)], work, env, timeout=60)
         result[role] = str(python)
+    result["gateway_identity"] = installed_identity(result["gateway"], wheel, version, digest, work, env)
     # 所有版本及安装来源核实后才替换描述文件。旧环境的路径仍可用于回滚。
     staged = generation / "environment.json.tmp"
     staged.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

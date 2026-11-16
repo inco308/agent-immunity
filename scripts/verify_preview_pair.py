@@ -31,7 +31,8 @@ def read_regular_file(path, limit):
     return data
 
 
-def verify_pair(directory, commit, run_id, branch="main"):
+def verify_pair_with_wheel(directory, commit, run_id, branch="main"):
+    """核对两个归档，供准备流程直接使用此次校验所读的 wheel 字节。"""
     directory = Path(directory)
     info = directory.lstat()
     if not stat.S_ISDIR(info.st_mode) or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
@@ -44,15 +45,20 @@ def verify_pair(directory, commit, run_id, branch="main"):
              and p.name.lower().endswith((".whl", ".tar.gz"))}
     if found != names:
         raise ValueError("目录中需要收据列出的同一构建的 wheel 和源码包，请核对包名和数量")
+    wheel_bytes = None
     for item in records:
         data = read_regular_file(directory / item["filename"], ARCHIVE_LIMIT)
         if hashlib.sha256(data).hexdigest() != item["sha256"]:
             raise ValueError(f"{item['kind']} 的实际 SHA-256 与指定作业的安装收据不符")
+        if item["kind"] == "wheel":
+            wheel_bytes = data
     sums = directory / "SHA256SUMS"
     has_manifest = os.path.lexists(sums)
     if has_manifest:
         validate_preview_checksums(read_regular_file(sums, 4096), report)
-    return {
+    if wheel_bytes is None:
+        raise ValueError("安装收据缺少 wheel")
+    receipt = {
         "schema_version": 1, "scope": "LOCAL_PREVIEW_PAIR", "status": "passed",
         "verified_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "repository": REPOSITORY, "branch": branch, "commit": commit, "run_id": run_id,
@@ -61,6 +67,12 @@ def verify_pair(directory, commit, run_id, branch="main"):
         "packages": [{key: item[key] for key in ("kind", "filename", "installed_version", "sha256", "protocol_version")}
                      for item in records],
     }
+    return receipt, wheel_bytes
+
+
+def verify_pair(directory, commit, run_id, branch="main"):
+    receipt, _ = verify_pair_with_wheel(directory, commit, run_id, branch)
+    return receipt
 
 
 def main(argv=None):
