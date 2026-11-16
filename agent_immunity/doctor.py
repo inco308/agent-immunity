@@ -9,6 +9,8 @@ from .core.policy import UNSUPPORTED_VERSION_HINT, Policy, UnsupportedPolicyVers
 MESSAGES = {
     "POLICY_INVALID": "无法加载策略。请确认文件可读、UTF-8 JSON 完整且键名唯一，再检查整数 version、策略字段和工作目录。",
     "POLICY_VERSION_UNSUPPORTED": UNSUPPORTED_VERSION_HINT,
+    "POLICY_TOOL_ADDED": "候选策略新增了此工具，请核对其声明的能力。",
+    "POLICY_CAPABILITIES_ADDED": "候选策略为已有工具新增了能力，请核对用途和授权边界。",
     "POLICY_WRITABLE": "策略文件落在此工具声明的写入根目录内。请将策略移到受保护的目录。",
     "EXEC_ARGUMENTS_INVALID": "至少一个执行白名单条目无法通过这份策略自身的参数检查。",
     "CATALOG_INVALID": "目录必须是完整的 UTF-8 tools/list 快照，工具名唯一，且没有后续分页。",
@@ -93,34 +95,57 @@ def contract_issues(spec, schema):
             yield problem, field
 
 
-def check(policy_path, catalog_path=None):
+def check(policy_path, catalog_path=None, *, baseline_path=None):
     report = {
         "schema_version": 1, "scope": "policy" if catalog_path is None else "policy_and_catalog",
         "status": "pass", "registered_tools": 0, "hidden_tools": None, "findings": [],
     }
 
-    def record(code, tool=None, field=None):
-        severity = "review" if code == "SCHEMA_REVIEW" else "error"
+    comparing = baseline_path is not None
+    if comparing:
+        report["comparison"] = {"scope": "added_tools_and_capabilities", "status": "not_compared"}
+
+    def record(code, tool=None, field=None, *, policy_role=None, capabilities=None):
+        severity = "review" if code in ("SCHEMA_REVIEW", "POLICY_TOOL_ADDED", "POLICY_CAPABILITIES_ADDED") else "error"
         entry = {"code": code, "severity": severity, "message": MESSAGES[code]}
         if tool is not None:
             entry["tool"] = tool
         if field is not None:
             entry["field"] = field
+        if policy_role is not None:
+            entry["policy_role"] = policy_role
+        if capabilities is not None:
+            entry["capabilities"] = sorted(capabilities)
         report["findings"].append(entry)
         if report["status"] != "error":
             report["status"] = severity
 
+    policy_role = "candidate" if comparing else None
+    policy = baseline = None
     try:
         supplied = Path(policy_path).absolute()
         path = resolved(supplied, strict=True)
         policy = Policy.load(path)
+        report["registered_tools"] = len(policy.tools)
+        if comparing:
+            policy_role = "baseline"
+            baseline = Policy.load(baseline_path)
     except UnsupportedPolicyVersion:
-        record("POLICY_VERSION_UNSUPPORTED", field="version")
-        return report
+        record("POLICY_VERSION_UNSUPPORTED", field="version", policy_role=policy_role)
     except INPUT_ERRORS:
-        record("POLICY_INVALID")
+        record("POLICY_INVALID", policy_role=policy_role)
+    if policy is None:
         return report
-    report["registered_tools"] = len(policy.tools)
+    if baseline is not None:
+        for name, spec in sorted(policy.tools.items()):
+            old = baseline.tools.get(name)
+            if old is None:
+                record("POLICY_TOOL_ADDED", name, capabilities=spec.capabilities)
+            else:
+                added = spec.capabilities - old.capabilities
+                if added:
+                    record("POLICY_CAPABILITIES_ADDED", name, capabilities=added)
+        report["comparison"]["status"] = "compared"
     for name, spec in sorted(policy.tools.items()):
         # 工具既可能覆盖目标文件，也可能替换通向该文件的链接。
         if "write" in spec.capabilities and any(contained(p, root) for root in spec.roots for p in (path, supplied)):
@@ -151,16 +176,29 @@ def check(policy_path, catalog_path=None):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--policy", required=True, type=Path, help="本地策略文件")
+    parser.add_argument("--baseline", type=Path, help="已验收的旧策略，用于核对候选策略新增的工具和声明能力")
     parser.add_argument("--catalog", type=Path, help="从原始上游采集的完整 tools/list 快照")
     parser.add_argument("--json", action="store_true", help="输出适合 CI 使用的 JSON")
     args = parser.parse_args(argv)
-    report = check(args.policy, args.catalog)
+    report = check(args.policy, args.catalog, baseline_path=args.baseline)
     if args.json:
         print(json.dumps(report, ensure_ascii=True, sort_keys=True))
     else:
         print(f"{report['status'].upper()}  检查范围 {report['scope']}，策略登记工具数 {report['registered_tools']}")
+        if "comparison" in report:
+            if report["comparison"]["status"] == "not_compared":
+                print("两份策略未能完成对比。")
+            elif any("capabilities" in item for item in report["findings"]):
+                print("发现新增工具或能力声明，详见下方审阅项。")
+            else:
+                print("未发现新增工具或能力声明。")
+            print("对比范围为工具名和声明能力。路径、网络目标、执行参数与状态约束需另行核对。")
         for issue in report["findings"]:
             location = [json.dumps(issue[k], ensure_ascii=True) for k in ("tool", "field") if k in issue]
+            if "policy_role" in issue:
+                location.insert(0, "基准策略" if issue["policy_role"] == "baseline" else "候选策略")
+            if "capabilities" in issue:
+                location.append(", ".join(issue["capabilities"]))
             print(" ".join([issue["code"], *location, issue["message"]]))
     return EXIT_CODES[report["status"]]
 
