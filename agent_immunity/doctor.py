@@ -11,6 +11,7 @@ MESSAGES = {
     "POLICY_VERSION_UNSUPPORTED": UNSUPPORTED_VERSION_HINT,
     "POLICY_TOOL_ADDED": "候选策略新增了此工具，请核对其声明的能力。",
     "POLICY_CAPABILITIES_ADDED": "候选策略为已有工具新增了能力，请核对用途和授权边界。",
+    "POLICY_FILE_ROOTS_EXPANDED": "此工具保留的读写能力覆盖了原授权目录之外的位置，请核对两份策略的 roots 与 workspace。",
     "POLICY_WRITABLE": "策略文件落在此工具声明的写入根目录内。请将策略移到受保护的目录。",
     "EXEC_ARGUMENTS_INVALID": "至少一个执行白名单条目无法通过这份策略自身的参数检查。",
     "CATALOG_INVALID": "目录必须是完整的 UTF-8 tools/list 快照，工具名唯一，且没有后续分页。",
@@ -95,6 +96,15 @@ def contract_issues(spec, schema):
             yield problem, field
 
 
+def file_roots_expanded(candidate_roots, baseline_roots):
+    # 两边均已由策略加载器解析。匹配目录自身和完整祖先，避免逐对比较两份根列表。
+    baseline = {str(root) for root in baseline_roots}
+    for root in candidate_roots:
+        if str(root) not in baseline and not any(str(parent) in baseline for parent in root.parents):
+            return True
+    return False
+
+
 def check(policy_path, catalog_path=None, *, baseline_path=None):
     report = {
         "schema_version": 1, "scope": "policy" if catalog_path is None else "policy_and_catalog",
@@ -103,10 +113,12 @@ def check(policy_path, catalog_path=None, *, baseline_path=None):
 
     comparing = baseline_path is not None
     if comparing:
-        report["comparison"] = {"scope": "added_tools_and_capabilities", "status": "not_compared"}
+        report["comparison"] = {"scope": "added_tools_capabilities_and_file_roots", "status": "not_compared"}
 
     def record(code, tool=None, field=None, *, policy_role=None, capabilities=None):
-        severity = "review" if code in ("SCHEMA_REVIEW", "POLICY_TOOL_ADDED", "POLICY_CAPABILITIES_ADDED") else "error"
+        severity = "review" if code in (
+            "SCHEMA_REVIEW", "POLICY_TOOL_ADDED", "POLICY_CAPABILITIES_ADDED", "POLICY_FILE_ROOTS_EXPANDED",
+        ) else "error"
         entry = {"code": code, "severity": severity, "message": MESSAGES[code]}
         if tool is not None:
             entry["tool"] = tool
@@ -145,6 +157,9 @@ def check(policy_path, catalog_path=None, *, baseline_path=None):
                 added = spec.capabilities - old.capabilities
                 if added:
                     record("POLICY_CAPABILITIES_ADDED", name, capabilities=added)
+                retained = old.capabilities & spec.capabilities & {"read", "write"}
+                if retained and file_roots_expanded(spec.roots, old.roots):
+                    record("POLICY_FILE_ROOTS_EXPANDED", name, capabilities=retained)
         report["comparison"]["status"] = "compared"
     for name, spec in sorted(policy.tools.items()):
         # 工具既可能覆盖目标文件，也可能替换通向该文件的链接。
@@ -176,7 +191,7 @@ def check(policy_path, catalog_path=None, *, baseline_path=None):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--policy", required=True, type=Path, help="本地策略文件")
-    parser.add_argument("--baseline", type=Path, help="已验收的旧策略，用于核对候选策略新增的工具和声明能力")
+    parser.add_argument("--baseline", type=Path, help="已验收的旧策略，用于核对新增工具、声明能力和扩大的读写目录")
     parser.add_argument("--catalog", type=Path, help="从原始上游采集的完整 tools/list 快照")
     parser.add_argument("--json", action="store_true", help="输出适合 CI 使用的 JSON")
     args = parser.parse_args(argv)
@@ -189,10 +204,10 @@ def main(argv=None):
             if report["comparison"]["status"] == "not_compared":
                 print("两份策略未能完成对比。")
             elif any("capabilities" in item for item in report["findings"]):
-                print("发现新增工具或能力声明，详见下方审阅项。")
+                print("发现新增工具、能力声明或扩大的读写目录，详见下方审阅项。")
             else:
-                print("未发现新增工具或能力声明。")
-            print("对比范围为工具名和声明能力。路径、网络目标、执行参数与状态约束需另行核对。")
+                print("未发现新增工具、能力声明或扩大的读写目录。")
+            print("对比范围包括工具名、声明能力和读写目录。网络目标、参数与状态约束需另行核对。")
         for issue in report["findings"]:
             location = [json.dumps(issue[k], ensure_ascii=True) for k in ("tool", "field") if k in issue]
             if "policy_role" in issue:
