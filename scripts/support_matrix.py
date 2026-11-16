@@ -4,37 +4,11 @@ import re
 import sys
 
 from .check_x64_install_report import validate as validate_x64_install
-from .support_evidence import NATIVE_TARGETS, PACKAGE_JOB, PLATFORMS, REPOSITORY, fetch_evidence, package_artifact_name
-
-
-REPO_URL = f"https://github.com/{REPOSITORY}"
-
-
-def version(value):
-    # 只将版本号放入表格，避免把报告中的自由文本或 Markdown 当成证据发布。
-    if not isinstance(value, str) or not re.fullmatch(r"[0-9][0-9A-Za-z.+!-]{0,63}", value):
-        raise ValueError("报告中的版本号无效")
-    return value
-
-
-def by_name(items):
-    indexed = {item["name"]: item for item in items}
-    if len(indexed) != len(items):
-        raise ValueError("证据中存在重名项目")
-    return indexed
-
-
-def job_link(job, run, os_label, *required_steps):
-    if (job["status"] != "completed" or job["conclusion"] != "success"
-            or type(job["run_id"]) is not int or job["run_id"] != run
-            or os_label not in job["labels"] or type(job["id"]) is not int or job["id"] <= 0):
-        raise ValueError("作业运行编号、平台或成功状态不符")
-    steps = by_name([step for step in job["steps"] if step["name"] in required_steps])
-    for name in required_steps:
-        step = steps.get(name, {})
-        if step.get("status") != "completed" or step.get("conclusion") != "success":
-            raise ValueError(f"缺少成功的验收步骤：{name}")
-    return f"[作业记录]({REPO_URL}/actions/runs/{run}/job/{job['id']})"
+from .recovery_matrix import render_recovery
+from .support_evidence import (
+    NATIVE_TARGETS, PACKAGE_JOB, PLATFORMS, RECOVERY_CHECK_STEP, REPO_URL, by_name, fetch_evidence,
+    fetch_recovery_evidence, job_link, package_artifact_name, version,
+)
 
 
 def mac_package_details(report, series, gateway):
@@ -187,9 +161,24 @@ def codex_row(report, job, run):
     if (previous == candidate or [s["version"] for s in stages] != [previous, candidate, previous]
             or not all(re.fullmatch(r"[a-f0-9]{64}", h) for h in hashes) or hashes[0] != hashes[2] or hashes[0] == hashes[1]):
         raise ValueError("上游安装版本或回退配置证据不符")
-    for upstream in (upstreams["previous"], upstreams["candidate"]):
-        if upstream["policy_check"] != "pass":
-            raise ValueError("上游目录未通过策略体检")
+    if upstreams["previous"]["policy_check"] != "pass":
+        raise ValueError("初始上游目录未通过策略体检")
+    combined_workflow = any(step["name"] == RECOVERY_CHECK_STEP for step in job["steps"])
+    if "policy_comparison" in report or combined_workflow:
+        # 早期候选策略演练只有两份策略的摘要；组合故障演练还逐阶段记录实际策略。
+        comparison = report["policy_comparison"]
+        baseline, candidate_hash = comparison["baseline_policy_sha256"], comparison["candidate_policy_sha256"]
+        if (comparison["status"] != "pass" or comparison["codes"] != []
+                or upstreams["candidate"].get("policy_check", "pass") != "pass"
+                or not all(re.fullmatch(r"[0-9a-f]{64}", h) for h in (baseline, candidate_hash))
+                or report["policy_sha256"] != baseline):
+            raise ValueError("宿主三阶段策略与候选检查证据不符")
+        if combined_workflow or "candidate_runtime_check" in comparison or any("policy_sha256" in s for s in stages):
+            if (comparison["candidate_runtime_check"] != "pass"
+                    or [s["policy_sha256"] for s in stages] != [baseline, candidate_hash, baseline]):
+                raise ValueError("缺少候选网关自身的体检或逐阶段策略摘要")
+    elif upstreams["candidate"]["policy_check"] != "pass":
+        raise ValueError("候选上游目录未通过策略体检")
     for s in stages:
         if (s["source"] != "UTC 09:00" or s["target"] != "Asia/Tokyo 18:00" or s["difference"] != "+9.0h"
                 or s["visible_tools"] != ["convert_time"] or s["denial"] != "TRANSITION_DENIED"
@@ -241,15 +230,24 @@ def render_matrix(commit, verify_run, pilot_run, verify_jobs, interop_reports, p
     ])
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--commit", required=True, help="两个工作流共同验收的完整 main 提交 SHA")
     parser.add_argument("--verify-run", required=True, type=int, help="verify 工作流的运行编号")
     parser.add_argument("--pilot-run", required=True, type=int, help="codex-time-pilot 工作流的运行编号")
-    args = parser.parse_args()
+    parser.add_argument("--recovery-run", type=int, help="双预览模式的 codex-time-pilot 手动运行编号")
+    parser.add_argument("--recovery-commit", help="运行恢复演练的完整提交 SHA，可与网关构建提交不同")
+    args = parser.parse_args(argv)
+    if (args.recovery_run is None) != (args.recovery_commit is None):
+        parser.error("--recovery-run 和 --recovery-commit 必须一起提供")
     try:
         evidence = fetch_evidence(args.commit, args.verify_run, args.pilot_run)
         matrix = render_matrix(args.commit, args.verify_run, args.pilot_run, *evidence)
+        if args.recovery_run is not None:
+            recovery = fetch_recovery_evidence(args.recovery_commit, args.recovery_run)
+            matrix += "\n" + render_recovery(args.recovery_commit, args.recovery_run, *recovery,
+                                            matrix_commit=args.commit, verify_run=args.verify_run,
+                                            gateway_version=evidence[3]["gateway_version"])
     except (ValueError, OSError) as exc:
         print(f"无法生成支持矩阵：{exc}", file=sys.stderr)
         return 1

@@ -1,9 +1,12 @@
 """用合成 GitHub 记录验证支持矩阵取证的来源、尝试和产物绑定。"""
 
+import hashlib
+import io
 import json
 from pathlib import Path
 import subprocess
 import unittest
+import zipfile
 from unittest.mock import Mock, patch
 
 from scripts import support_evidence as evidence
@@ -277,3 +280,82 @@ class SupportEvidenceTests(unittest.TestCase):
                     self.assertRaises(ValueError) as error:
                 evidence._report(22, "codex-time-lifecycle")
             self.assertNotIn("GITHUB_FAKE_SIGNED_URL", str(error.exception))
+
+
+class RecoveryEvidenceTests(unittest.TestCase):
+    def setUp(self):
+        self.dispatch = {**run_record(37, "codex-time-pilot"), "event": "workflow_dispatch",
+                         "head_branch": "pilot/recovery"}
+        self.job = {**job(37, 43, "lifecycle"), "labels": ["ubuntu-24.04"],
+                    "steps": [{"name": step, "status": "completed", "conclusion": "success"}
+                              for step in evidence.RECOVERY_STEPS]}
+        self.routes = {
+            f"{evidence.RUNS_API}/37": self.dispatch,
+            f"{evidence.RUNS_API}/37/attempts/1/jobs?per_page=100": [{"total_count": 1, "jobs": [self.job]}],
+        }
+        self.archives = {}
+        self.report = {"schema_version": 2, "gateway_mode": "verified_previews", "upstreams": {}}
+        for slot, sha, run, artifact in (("previous", "b" * 40, 31, 51), ("candidate", "c" * 40, 32, 52)):
+            data = f"{slot} wheel".encode()
+            self.report["upstreams"][slot] = {"gateway": {
+                "commit": sha, "run_id": run, "artifact_id": artifact, "version": "0.3.0a1",
+                "wheel_sha256": hashlib.sha256(data).hexdigest(),
+            }}
+            self.routes[f"{evidence.RUNS_API}/{run}"] = {**run_record(run, "ci"), "head_sha": sha}
+            self.archive(run, sha, artifact, "agent-immunity-dist", {"agent_immunity-0.3.0a1-py3-none-any.whl": data})
+        self.policy_archive()
+
+    def archive(self, run, sha, artifact, name, members):
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as output:
+            for key, data in members.items():
+                output.writestr(key, data)
+        data = stream.getvalue()
+        self.archives[f"repos/{evidence.REPOSITORY}/actions/artifacts/{artifact}/zip"] = data
+        self.routes[f"{evidence.RUNS_API}/{run}/artifacts?name={name}&per_page=100"] = {
+            "total_count": 1, "artifacts": [{
+                "id": artifact, "name": name, "expired": False, "size_in_bytes": len(data),
+                "digest": "sha256:" + hashlib.sha256(data).hexdigest(),
+                "workflow_run": {"id": run, "head_sha": sha, "repository_id": evidence.REPOSITORY_ID,
+                                 "head_repository_id": evidence.REPOSITORY_ID},
+            }],
+        }
+
+    def policy_archive(self, marker=b"1\n"):
+        self.archive(37, COMMIT, 57, "codex-time-policy-recovery",
+                     {"report.json": json.dumps(self.report).encode(), "candidate-exit.txt": marker})
+
+    def fetch(self):
+        with patch.object(evidence, "_api", side_effect=lambda key, **_: self.routes[key]), \
+                patch.object(evidence, "_gh", side_effect=lambda args: self.archives[args[-1]]):
+            return evidence.fetch_recovery_evidence(COMMIT, 37)
+
+    def test_dispatch_reads_two_main_builds_and_exact_wheel_bytes(self):
+        self.assertEqual(self.fetch(), (self.job, self.report, 57))
+        self.report["upstreams"]["candidate"]["gateway"]["wheel_sha256"] = "d" * 64
+        self.policy_archive()
+        with self.assertRaisesRegex(ValueError, "wheel"):
+            self.fetch()
+
+    def test_wrong_marker_single_gateway_and_skipped_download_fail(self):
+        self.policy_archive(marker=b"2\n")
+        with self.assertRaisesRegex(ValueError, "退出码"):
+            self.fetch()
+        self.report["schema_version"] = 1
+        self.policy_archive()
+        with self.assertRaisesRegex(ValueError, "两份"):
+            self.fetch()
+        self.job["steps"][0]["conclusion"] = "skipped"
+        with self.assertRaises(ValueError):
+            self.fetch()
+
+    def test_run_artifact_mismatch_and_reruns_fail(self):
+        meta = self.routes[f"{evidence.RUNS_API}/32/artifacts?name=agent-immunity-dist&per_page=100"]["artifacts"][0]
+        for obj, key, wrong in (
+                (self.dispatch, "event", "push"), (self.dispatch, "run_attempt", 2),
+                (self.routes[f"{evidence.RUNS_API}/31"], "head_branch", "preview"),
+                (meta, "id", 51), (meta["workflow_run"], "head_sha", COMMIT),
+                (meta["workflow_run"], "head_repository_id", 1), (meta, "expired", True),
+                (meta, "digest", "sha256:" + "0" * 64)):
+            with self.subTest(key=key, wrong=wrong), patch.dict(obj, {key: wrong}), self.assertRaises(ValueError):
+                self.fetch()
