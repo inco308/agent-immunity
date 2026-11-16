@@ -62,7 +62,7 @@ python -m agent_immunity.doctor --policy examples/policy.json --catalog artifact
 
 ## 获取开发者预览包
 
-在对应提交的 GitHub Actions `verify` 页面下载 `agent-immunity-dist` 并解压。在该目录用 `sha256sum -c SHA256SUMS`，或在 PowerShell 中用 `Get-FileHash -Algorithm SHA256` 核对 wheel 与源码包摘要。在新的虚拟环境执行以下命令即可试用本轮版本。
+按完整提交 SHA 和 GitHub Actions 运行编号下载，校验通过后，wheel 和源码包位于输出目录的 `verified/` 子目录。要安装到新的虚拟环境，请先激活该环境，再进入 `verified/` 目录执行以下命令。[下载与校验步骤](verified-preview.md)
 
 ```text
 python -m pip install --no-index --no-deps ./agent_immunity-0.3.0a1-py3-none-any.whl
@@ -70,4 +70,4 @@ agent-immunity-check --help
 agent-immunity --help
 ```
 
-wheel 安装只使用本地文件。从源码包安装时需要构建后端。示例策略与上游脚本可在对应提交的 `examples/` 目录获取。工作流产物有保留期限，正式版本、长期下载地址以及签名与来源验证属于发行路线图中的后续工作。SHA-256 用于校验文件内容。[产品路线图](product-roadmap.md)
+wheel 安装只使用本地文件。从源码包安装时需要构建后端。示例策略与上游脚本可在对应提交的 `examples/` 目录获取。工作流产物有保留期限，正式版本、长期下载地址和独立发行签名属于发行路线图中的后续工作。[产品路线图](product-roadmap.md)
