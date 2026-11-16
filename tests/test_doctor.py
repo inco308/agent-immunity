@@ -206,6 +206,60 @@ class DoctorCliTests(unittest.TestCase):
                 self.assert_outcome(self.run_command(["--policy", str(path), "--json"]), status="error",
                                     scope="policy", codes=["POLICY_INVALID"])
 
+    def test_unsupported_version_is_actionable_and_private_in_both_cli_formats(self):
+        path = self.root / (PRIVATE_TEXT + ".json")
+        data = {"version": PRIVATE_LIMIT, "workspace": str(self.root / PRIVATE_VALUE), PRIVATE_TEXT: PRIVATE_URL}
+        original = json.dumps(data).encode()
+        path.write_bytes(original)
+        args = ["--policy", str(path), "--catalog", str(self.catalog_file)]
+        with patch("agent_immunity.doctor.read_catalog", side_effect=AssertionError("无效策略不应触发目录读取")):
+            report = self.assert_outcome(self.run_command([*args, "--json"], forbid_external_io=True), status="error")
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                self.assertEqual(main(args), 1)
+        finding, = report["findings"]
+        self.assertEqual((finding["code"], finding["severity"], finding.get("field")),
+                         ("POLICY_VERSION_UNSUPPORTED", "error", "version"))
+        self.assertEqual(report["registered_tools"], 0)
+        self.assertIsNone(report["hidden_tools"])
+        self.assertIn("version=1", finding["message"])
+        self.assertIn("恢复", finding["message"])
+        self.assertIn("网关", finding["message"])
+        self.assertIn(finding["code"], out.getvalue())
+        self.assertIn(finding["message"], out.getvalue())
+        for marker in (PRIVATE_TEXT, PRIVATE_VALUE, PRIVATE_URL, str(PRIVATE_LIMIT)):
+            self.assertNotIn(marker, out.getvalue() + err.getvalue())
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_malformed_policy_and_non_integer_versions_remain_generic_errors(self):
+        documents = [b'{"version":2', b'{"version":1,"version":2}', b'{"version":2,"version":1}',
+                     b'{"version":2,"future":{"x":1,"x":2}}', b'{"version":2,"x":NaN}',
+                     b'{"version":2,"x":"\xff"}', b'[]']
+        documents.extend(json.dumps({**self.policy, "version": value}).encode()
+                         for value in (True, False, 1.0, 2.0, "2", None))
+        documents.append(json.dumps({k: v for k, v in self.policy.items() if k != "version"}).encode())
+        documents.append(json.dumps({**self.policy, PRIVATE_TEXT: PRIVATE_VALUE}).encode())
+        with patch("agent_immunity.doctor.read_catalog", side_effect=AssertionError("无效策略不应触发目录读取")):
+            for data in documents:
+                with self.subTest(document=data):
+                    self.policy_file.write_bytes(data)
+                    report = self.assert_outcome(self.run_command(["--policy", str(self.policy_file), "--catalog",
+                                                                  str(self.catalog_file), "--json"]), status="error")
+                    self.assertEqual([f["code"] for f in report["findings"]], ["POLICY_INVALID"])
+
+    def test_restoring_accepted_policy_rechecks_catalog(self):
+        catalog = {"tools": [catalog_entry({"count": {"type": "integer"}}, ["count"])]}
+        self.assert_outcome(self.invoke(catalog=catalog), status="pass")
+        previous = self.policy_file.read_bytes()
+        args = ["--policy", str(self.policy_file), "--catalog", str(self.catalog_file), "--json"]
+        self.policy_file.write_text(json.dumps({**self.policy, "version": 2}), encoding="utf-8")
+        self.assert_outcome(self.run_command(args), status="error", codes=["POLICY_VERSION_UNSUPPORTED"])
+        self.policy_file.write_bytes(previous)
+        self.assert_outcome(self.run_command(args), status="pass")
+        catalog["tools"][0]["inputSchema"]["properties"]["count"] = {"type": "string"}
+        self.catalog_file.write_text(json.dumps(catalog), encoding="utf-8")
+        self.assert_outcome(self.run_command(args), status="error", codes=["TYPE_MISMATCH"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,11 +3,12 @@ import argparse
 import json
 from pathlib import Path
 
-from .core.policy import Policy, contained, resolved, strict_json
+from .core.policy import UNSUPPORTED_VERSION_HINT, Policy, UnsupportedPolicyVersion, contained, resolved, strict_json
 
 
 MESSAGES = {
-    "POLICY_INVALID": "无法加载策略。请核对 UTF-8 JSON、策略字段、工作区和目录。",
+    "POLICY_INVALID": "无法加载策略。请确认文件可读、UTF-8 JSON 完整且键名唯一，再检查整数 version、策略字段和工作目录。",
+    "POLICY_VERSION_UNSUPPORTED": UNSUPPORTED_VERSION_HINT,
     "POLICY_WRITABLE": "策略文件落在此工具声明的写入根目录内。请将策略移到受保护的目录。",
     "EXEC_ARGUMENTS_INVALID": "至少一个执行白名单条目无法通过这份策略自身的参数检查。",
     "CATALOG_INVALID": "目录必须是完整的 UTF-8 tools/list 快照，工具名唯一，且没有后续分页。",
@@ -113,6 +114,9 @@ def check(policy_path, catalog_path=None):
         supplied = Path(policy_path).absolute()
         path = resolved(supplied, strict=True)
         policy = Policy.load(path)
+    except UnsupportedPolicyVersion:
+        record("POLICY_VERSION_UNSUPPORTED", field="version")
+        return report
     except INPUT_ERRORS:
         record("POLICY_INVALID")
         return report

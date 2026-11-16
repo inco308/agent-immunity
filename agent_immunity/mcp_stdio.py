@@ -293,6 +293,8 @@ class StdioProxy:
         return self.exit_code
 
 def main():
+    from .core.policy import UNSUPPORTED_VERSION_HINT, UnsupportedPolicyVersion
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--policy", required=True, help="受信本地 JSON 策略")
     parser.add_argument("--timeout", type=float, default=30, help="每次上游请求超时秒数")
@@ -303,6 +305,8 @@ def main():
         parser.error("需要上游命令，timeout 必须介于 0 和 300 秒")
     try:
         policy = Policy.load(args.policy)
+    except UnsupportedPolicyVersion:
+        parser.error(f"POLICY_VERSION_UNSUPPORTED  {UNSUPPORTED_VERSION_HINT}")
     except (OSError, ValueError, TypeError, RecursionError):
         parser.error("无法加载有效的本地策略")
     return StdioProxy(policy, command, args.timeout).run()
