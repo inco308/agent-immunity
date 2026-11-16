@@ -11,6 +11,8 @@ import subprocess
 import tempfile
 import zipfile
 
+from .package_protocol import PROTOCOL_STEP
+
 
 REPOSITORY = "inco308/agent-immunity"
 REPOSITORY_ID = 1381124176
@@ -159,6 +161,10 @@ def package_artifact_name(job):
         if not all(_matches(s, {"status": "completed", "conclusion": conclusion}) for s in steps):
             raise ValueError("安装报告步骤状态与打包作业平台不符")
         requires_report = requires_report or applicable
+    protocol_steps = [step for step in all_steps if step["name"] == PROTOCOL_STEP]
+    if protocol_steps and (not requires_report or len(protocol_steps) != 1
+                           or not _matches(protocol_steps[0], {"status": "completed", "conclusion": "success"})):
+        raise ValueError("逐包协议验收需要唯一成功的握手步骤和对应平台的安装报告")
     if not requires_report:
         return None
     labels = job.get("labels")

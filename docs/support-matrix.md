@@ -88,6 +88,10 @@ python -X utf8 -m scripts.recovery_bundle check-install --bundle artifacts/recov
 
 核心包行有两种证据来源。历史作业的安装验收通过时，行中列出运行器标签和 Python 系列。有独立安装报告的作业，还会列出 wheel 与源码包各自测到的系统、架构和 Python 补丁版本。两份环境相同时合并显示，有差异时按包分别显示。
 
+第 2 版 `package-install.json` 为 wheel 和 sdist 各保留一条 `protocol_version`。每个包都在单独的新环境中安装，调用已安装的代理，与本地示例上游交换 `initialize` 和 `notifications/initialized`，再核对工具列表与 `ping`。字段取自该次初始化响应。打包作业须通过“核对每份发行包的 MCP 握手协议”并上传报告，矩阵才展示协议版本。
+
+下载任一打包作业的安装报告后，可在仓库根目录运行 `python -X utf8 -m scripts.package_protocol package-install.json`。两份包都须完成 MCP `2025-06-18` 的验收。旧版报告可继续用于复核其记录的安装环境；旧表的 `ping` 结果不会补写成握手版本。这里的协议证据适用于核心包和本地示例上游，更换真实宿主或上游后的业务兼容性由对应的互操作演练验证。
+
 生成器按作业选择 `macos-15`、`ubuntu-latest` 或 `windows-latest` 对应的环境核对和报告上传步骤。两步均通过后，从同一次 `verify` 运行的 `package-install-<运行器标签>-py<Python系列>` 产物中读取 `package-install.json`。每种包的文件名、安装版本和完整 SHA-256 都须有效，两个包都要通过策略体检和代理 `ping`。报告中的网关版本须与矩阵一致，两个解释器须匹配该作业的 Python 系列。
 
 Ubuntu 行分别列出发行版版本、Linux 内核版本和实测的 `linux-x86_64` 解释器平台。Windows 行列出系统内部版本和 `win-amd64`。生成器对 wheel 和源码包各自检查机器架构和 64 位指针宽度。早期 Ubuntu、Windows 作业仅跳过 macOS 专用步骤时，仍按原作业标签展示。已有适用的报告步骤时，缺失或错配的报告会使生成失败。

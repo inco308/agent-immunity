@@ -17,6 +17,53 @@ import zipfile
 REPO = Path(__file__).resolve().parents[1]
 DATA = {"agent_immunity/dataset/cases.json", "agent_immunity/dataset/policy.json"}
 
+# 由每个已安装包的 python -I 在源码树外执行，只输出可公开的环境字段。
+INSTALL_PROBE = """
+from importlib.metadata import distribution
+import json
+import os
+from pathlib import Path
+import platform
+import struct
+import sys
+import sysconfig
+import agent_immunity
+
+prefix = (Path.cwd() / "env").resolve(strict=True)
+dist = distribution("agent-immunity")
+if sys.prefix == sys.base_prefix or Path(sys.prefix).resolve(strict=True) != prefix:
+    raise ValueError("安装检查未使用预期的虚拟环境")
+metadata_files = [p for p in dist.files or () if p.name == "METADATA" and p.parent.name.endswith(".dist-info")]
+if (len(metadata_files) != 1
+        or not Path(dist.locate_file("")).resolve(strict=True).is_relative_to(prefix)
+        or not Path(dist.locate_file(metadata_files[0])).resolve(strict=True).is_relative_to(prefix)
+        or not Path(agent_immunity.__file__).resolve(strict=True).is_relative_to(prefix)):
+    raise ValueError("发行元数据或导入的网关包位于预期环境之外")
+if agent_immunity.__version__ != dist.version:
+    raise ValueError("已安装的网关模块与发行元数据版本不符")
+system = platform.system()
+if system == "Darwin":
+    os_version = platform.mac_ver()[0]
+elif system == "Windows":
+    os_version = platform.win32_ver()[1]
+else:
+    os_version = platform.release()
+# sysconfig 在 POSIX 上会直接返回交叉构建覆盖值；这里观测正在运行的解释器。
+os.environ.pop("_PYTHON_HOST_PLATFORM", None)
+observed = {"installed_version": dist.version, "implementation": platform.python_implementation(),
+            "python": platform.python_version(), "system": system, "os_version": os_version,
+            "machine": platform.machine(), "python_platform": sysconfig.get_platform(),
+            "pointer_bits": struct.calcsize("P") * 8}
+if system == "Linux":
+    # 发行版与内核分别观测；部分精简安装没有可读的 os-release。
+    try:
+        release = platform.freedesktop_os_release()
+    except (OSError, UnicodeError):
+        release = {}
+    observed.update(distro_id=release.get("ID"), distro_version=release.get("VERSION_ID"))
+print(json.dumps(observed))
+"""
+
 
 def verify_members(package, runtime):
     """检查实际归档清单，只允许运行模块、基准数据及各格式需要的打包元数据。"""
@@ -100,10 +147,10 @@ def probe_entry_points(scripts, python, work, env):
             if proxy.poll() is None:
                 proxy.kill()
             timeout.cancel()
-    return {"policy_check": "pass", "protocol_version": protocol, "proxy_ping": True}
+    return {"policy_check": "pass", "protocol_version": hello["protocolVersion"], "proxy_ping": True}
 
 
-def smoke_install(package, work):
+def smoke_install(package, work, *, expected_sha256=None):
     """两个发行文件使用不同的全新 venv；工作目录不含源码或其他可导入副本。"""
     work.mkdir()
     subprocess.run([sys.executable, "-I", "-m", "venv", "env"], cwd=work, check=True)
@@ -116,19 +163,44 @@ def smoke_install(package, work):
     def run(command, **options):
         return subprocess.run(command, cwd=work, env=env, check=True, timeout=180, **options)
 
-    run([python, "-m", "pip", "install", "--disable-pip-version-check", "--no-cache-dir", "--no-deps", package])
-    run([python, "-I", "-c", "import sys, agent_immunity; from pathlib import Path; "
-         "assert Path(agent_immunity.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())"])
+    # 由 pip 校验它实际读取的本地归档，包含同名文件在验收期间被替换的情形。
+    digest = expected_sha256 if expected_sha256 is not None else hashlib.sha256(package.read_bytes()).hexdigest()
+    lock = work / "package.lock"
+    lock.write_text(f"{package.resolve().as_uri()} --hash=sha256:{digest}\n", encoding="utf-8")
+    run([python, "-m", "pip", "install", "--disable-pip-version-check", "--no-cache-dir",
+         "--no-deps", "--require-hashes", "-r", lock])
+    probe = run([python, "-I", "-c", INSTALL_PROBE], stdout=subprocess.PIPE)
+    observed = json.loads(probe.stdout)
     run([scripts / ("agent-immunity-check.exe" if windows else "agent-immunity-check"), "--help"])
     run([python, "-I", "-X", "utf8", "-m", "agent_immunity.doctor", "--help"])
     run([python, "-I", "-X", "utf8", "-m", "agent_immunity.benchmark.run_evaluation", "--output", "benchmark.json", "--repeats", "2"])
-    probe_entry_points(scripts, python, work, env)
+    return {**observed, **probe_entry_points(scripts, python, work, env)}
+
+
+def write_report(path, records):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    report = {"schema_version": 2, "scope": "CORE_PACKAGE_INSTALL", "status": "passed", "packages": records}
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, mode="w", encoding="utf-8", delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump(report, stream, ensure_ascii=False, indent=2)
+            stream.write("\n")
+        temporary.replace(path)
+    finally:
+        if temporary:
+            temporary.unlink(missing_ok=True)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("dist", type=Path, help="本次构建产物目录")
-    directory = parser.parse_args().dist.resolve()
+    parser.add_argument("--report", type=Path, help="在发行目录外保存两份安装验收的 JSON 记录")
+    args = parser.parse_args()
+    directory = args.dist.resolve()
+    if args.report is not None and (args.report.resolve().is_relative_to(directory)
+                                    or args.report.parent.resolve().is_relative_to(directory)):
+        parser.error("报告路径必须位于发行文件目录之外")
     wheels = sorted(directory.glob("agent_immunity-*.whl"))
     sources = sorted(directory.glob("agent_immunity-*.tar.gz"))
     if len(wheels) != 1 or len(sources) != 1:
@@ -138,22 +210,33 @@ def main():
     if not wheels[0].name.startswith(stem + "-"):
         parser.error("两个包的版本不一致")
     sums = directory / "SHA256SUMS"
+    if args.report is not None and args.report.resolve() in {path.resolve() for path in (*packages, sums)}:
+        parser.error("报告路径不能替换发行文件或校验清单指向的目标")
     if set(directory.iterdir()) - {*packages, sums}:
         parser.error("目录含额外文件，请指定仅含本次发行包的目录")
     runtime = {path.relative_to(REPO).as_posix() for path in (REPO / "agent_immunity").rglob("*.py")} | DATA
     for package in packages:
         verify_members(package, runtime)
-    expected = "".join(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n" for path in packages)
+    hashes = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in packages}
+    expected = "".join(f"{hashes[path]}  {path.name}\n" for path in packages)
     if sums.exists() and sums.read_text(encoding="ascii") != expected:
         raise ValueError("SHA256SUMS 与发行文件不符")
+    records = []
     with tempfile.TemporaryDirectory(prefix="agent-immunity-dist-") as tmp:
         outside = Path(tmp).resolve()
         if outside.is_relative_to(REPO):
             raise ValueError("请将系统临时目录设置在源码仓库之外")
         for package, label in zip(packages, ("wheel", "sdist")):
-            smoke_install(package, outside / label)
+            observed = smoke_install(package, outside / label, expected_sha256=hashes[package])
+            if observed["installed_version"] != stem.removeprefix("agent_immunity-"):
+                raise ValueError(f"{package.name} 安装后的发行版本与归档名不符")
+            records.append({"kind": label, "filename": package.name, "sha256": hashes[package], **observed})
+    if any(hashlib.sha256(path.read_bytes()).hexdigest() != hashes[path] for path in packages):
+        raise ValueError("发行文件在安装验收期间发生变化")
     sums.write_bytes(expected.encode("ascii"))
     print(expected, end="")
+    if args.report is not None:
+        write_report(args.report, records)
 
 
 if __name__ == "__main__":
