@@ -51,7 +51,7 @@ def _feature_flags() -> list[str]:
 class _JsonProcess:
     """分别读取标准输出和错误流；标准输出只接受有界 JSONL。"""
 
-    def __init__(self, command: list[str], cwd: Path, timeout: float):
+    def __init__(self, command: list[str], cwd: Path, timeout: float, *, env: dict[str, str] | None = None):
         self.deadline = time.monotonic() + timeout
         self.lines: queue.Queue[str | None] = queue.Queue()
         self.bytes_read = 0
@@ -60,7 +60,7 @@ class _JsonProcess:
             self.process = subprocess.Popen(
                 command, cwd=str(cwd), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
-                shell=False, **_process_options(),
+                shell=False, env=env, **_process_options(),
             )
         except OSError as exc:
             raise CodexBackendError("无法启动 Codex CLI") from exc
