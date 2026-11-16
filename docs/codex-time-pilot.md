@@ -29,6 +29,20 @@ python -X utf8 -m pilot.codex_time.run --codex pilot/codex_time/node_modules/.bi
 
 Windows 的 `--codex` 可指向相同版本的 `codex.exe`。每次演练使用新的输出目录，配置和数据都写入这次的项目。安装程序为网关、旧上游、新上游各建虚拟环境，校验上游 wheel 哈希、依赖一致性和 Python 包实际导入位置。准备失败时，已有的环境描述仍可使用。
 
+从已下载的发布构建准备网关时，可改用 `prepare_preview` 入口。先按[安装前收据核验](../doctor.md#安装前核对下载的两个包)下载指定作业的完整 wheel 和源码包，再运行：
+
+```text
+python -X utf8 -m pilot.codex_time.prepare_preview --root artifacts/pilot-env-verified --dist artifacts/preview-43859212373 --commit 0110c4fe33673fb29bea6e5e1182c4a95e26ee00 --run 43859212373 --branch ci/record-installed-mcp-protocol
+python -X utf8 -m pilot.codex_time.run --codex pilot/codex_time/node_modules/.bin/codex --environment artifacts/pilot-env-verified/environment.json --output-dir artifacts/verified-time-run
+```
+
+准备入口在创建任何新环境目录之前重新检查发布作业、上传记录和 wheel、sdist 摘要。随后只从刚才读取的 wheel 字节安装，以 SHA-256 锁定 pip 输入，并比较安装后的运行文件、METADATA 和构建身份。身份验收通过后，才原子更新 `environment.json`，其中记录来源分支、提交、作业产物编号和两份包的收据。同一版本号的其他构建不能满足收据。若来源日志只能提供 `UNKNOWN STEP`、报告没有具名上传步骤，准备会失败并保留已有的环境描述和 Codex 注册。
+
+Windows 本机已验证发布构建 `0110c4f` 的预览文件，旧版上游完成安装、升级和回退。随后将 wheel 或源码包分别替换成同版本的其他构建。两次准备都在安装和生成新代之前被拒绝；原环境描述、已安装文件、Codex 注册与输入文件均保持不变。拒绝后重连原 Codex，时区转换仍成功，重复调用仍收到 `TRANSITION_DENIED`。[实测收据](../results/codex-time/prepare-verified-preview-pair.json)
+
+
+该入口的来源校验在线进行，需要仍在保留期的 GitHub CI 日志和产物，并需预览分支的 push 已完成且成功。在线校验结束后，单独的安装进程使用临时配置，不继承 GitHub CLI 登录凭据。三阶段宿主演练只在新环境身份校验通过后启动。
+
 运行器先向两个上游采集工具目录，再用已安装的策略检查器核对兼容性。两份检查通过后，运行器确认测试账号的 MCP 注册表为空，在本次演练的 Git 项目创建 `host-project/.codex/config.toml`。文件只有一条 `mcp_servers.time_pilot` 赋值，包含本阶段的网关命令及参数。
 
 每个阶段先把该文件的内容作为单个 `-c` 参数交给 `codex mcp get time_pilot --json`，核对宿主解析出的命令与参数，再把同一赋值传给新启动的 Codex App Server，通过临时线程发现和调用时区工具。配置的生效范围是这两个宿主进程。升级在项目内原子切换上游解释器，回退恢复初始文件字节，三个阶段分别验证业务返回和会话级拒绝。

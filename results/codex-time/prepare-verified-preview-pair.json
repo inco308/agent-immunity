@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "scope": "CODEX_VERIFIED_PREVIEW_PREPARATION",
+  "status": "passed",
+  "codex_version": "codex-cli 0.167.0-alpha.3.2",
+  "canonical_branch": "ci/record-installed-mcp-protocol",
+  "canonical_commit": "0110c4fe33673fb29bea6e5e1182c4a95e26ee00",
+  "canonical_run": 43859212373,
+  "package_receipt_run": 43859212373,
+  "wheel": {
+    "filename": "agent_immunity-0.3.0a1-py3-none-any.whl",
+    "sha256": "8d432cc6cbd85af34235333bf2f28749171f6f141474661d97e863bd17f2d177",
+    "protocol_version": "2025-06-18",
+    "source_run": 43859212373
+  },
+  "sdist": {
+    "filename": "agent_immunity-0.3.0a1.tar.gz",
+    "sha256": "04b863d65c2dbccbaee5a1abed2be1b06fa025d7f19e769d7144199a29b4f46e",
+    "protocol_version": "2025-06-18",
+    "source_run": 43859212373
+  },
+  "gateway_identity": {
+    "wheel_sha256": "8d432cc6cbd85af34235333bf2f28749171f6f141474661d97e863bd17f2d177",
+    "version": "0.3.0a1",
+    "runtime_files": 19,
+    "metadata_sha256": "346dd3ac0aa6d166422e82fa7a7e6c01cfb0ebe2e76297f665eb0ebe03bc5c4d"
+  },
+  "upstream_stages": [
+    {
+      "phase": "install",
+      "version": "2025.8.4",
+      "target": "Asia/Tokyo 18:00",
+      "weekday_field": false,
+      "denial": "TRANSITION_DENIED",
+      "registration_sha256": "f3a2c28026272431e246c6d1671b453d0079ad9535075817d92f38a7712fd615"
+    },
+    {
+      "phase": "upgrade",
+      "version": "2025.9.25",
+      "target": "Asia/Tokyo 18:00",
+      "weekday_field": true,
+      "denial": "TRANSITION_DENIED",
+      "registration_sha256": "4fef2824b357a291e893a41199b3b75aab90d70aa18545dc32d5ee7db71cf18b"
+    },
+    {
+      "phase": "rollback",
+      "version": "2025.8.4",
+      "target": "Asia/Tokyo 18:00",
+      "weekday_field": false,
+      "denial": "TRANSITION_DENIED",
+      "registration_sha256": "f3a2c28026272431e246c6d1671b453d0079ad9535075817d92f38a7712fd615"
+    }
+  ],
+  "held_environment": {
+    "descriptor_sha256": "955a810ce8e864ce0b10d529f2ddbddbde36cf1589ca5efc004475e4f24d898a",
+    "original_gateway_registration_sha256": "f3a2c28026272431e246c6d1671b453d0079ad9535075817d92f38a7712fd615",
+    "installed_file_count": 9508,
+    "installed_tree_sha256": "9f59977dee20725689c17d50b07ffa1a3f445882a3c02b2b368c1b82487c015a",
+    "generation_count": 1
+  },
+  "rejected_cases": [
+    {
+      "case": "mixed-wheel",
+      "exit": 1,
+      "inputs_unchanged": true,
+      "generation_unchanged": true,
+      "registration_unchanged": true,
+      "environment_unchanged": true
+    },
+    {
+      "case": "mixed-sdist",
+      "exit": 1,
+      "inputs_unchanged": true,
+      "generation_unchanged": true,
+      "registration_unchanged": true,
+      "environment_unchanged": true
+    }
+  ],
+  "post_rejection_reconnection": {
+    "visible_tools": [
+      "convert_time"
+    ],
+    "source": "UTC 09:00",
+    "target": "Asia/Tokyo 18:00",
+    "difference": "+9.0h",
+    "weekday_field": false,
+    "denial": "TRANSITION_DENIED"
+  },
+  "verification": "Wheel 与源码包的收据摘要分别匹配；混入两个同版本包时在发行体检阶段拒绝，原安装描述、目录代次与 Codex 注册保持相同"
+}
