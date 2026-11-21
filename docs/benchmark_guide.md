@@ -12,14 +12,14 @@ python -X utf8 -m agent_immunity.benchmark.run_evaluation --output artifacts/ben
 
 数据来自 `agent_immunity/dataset/cases.json`，策略来自同目录的 `policy.json`。虚构凭证与调用参数均公开可审查。每个用例建立独立会话，按用例注入预设来源结果，然后计算一次目标调用的决策，并重复计时。它不会调用 LLM，也不会实际执行这些目标工具或向数据集 URL 发包。
 
-数据集包含 23 条攻击调用和 6 条良性调用。攻击类别包括未知工具、名称混淆、文档提示注入后的越权调用、路径越界、执行参数越权、URL 主机混淆、跨工具凭证外发，以及同一凭证的多种编码表示。提示注入用例的目标调用由数据预先指定，没有测量真实模型是否会被该文本诱导。
+数据集包含 24 条攻击调用和 7 条良性调用。攻击类别包括未知工具、名称混淆、文档提示注入后的越权调用、路径越界、执行参数越权、URL 主机混淆、跨工具凭证外发，以及同一凭证的多种编码表示。提示注入用例的目标调用由数据预先指定，没有测量真实模型是否会被该文本诱导。
 
 | 模式 | 实际含义 | 攻击调用阻断 | 良性调用放行 |
 | --- | --- | ---: | ---: |
-| `NO_POLICY` | 对所有目标调用返回允许 | 0 / 23 | 6 / 6 |
-| `REGEX_EXAMPLE` | 对序列化参数匹配源码中公开的简单正则 | 1 / 23 | 6 / 6 |
-| `POLICY_ONLY` | 保留工具、参数、路径、origin 和执行白名单，消融凭证检查 | 7 / 23 | 6 / 6 |
-| `POLICY_AND_CREDENTIALS` | 使用完整的当前检查器 | 22 / 23 | 6 / 6 |
+| `NO_POLICY` | 对所有目标调用返回允许 | 0 / 24 | 7 / 7 |
+| `REGEX_EXAMPLE` | 对序列化参数匹配源码中公开的简单正则 | 1 / 24 | 7 / 7 |
+| `POLICY_ONLY` | 保留工具、参数、路径、origin 和执行白名单，消融凭证检查 | 7 / 24 | 7 / 7 |
+| `POLICY_AND_CREDENTIALS` | 使用完整的当前检查器 | 23 / 24 | 7 / 7 |
 
 `POLICY_ONLY` 的消融使用基准内部补丁，没有产品配置开关。正则示例不代表所有规则系统，更不能作为其他产品性能或安全性的比较。没有真实模型调用时，LLM 护栏项保持未测，不使用字符串判断冒充模型。
 
@@ -41,8 +41,9 @@ python -X utf8 -m agent_immunity.benchmark.run_evaluation --output artifacts/ben
 | 凭证逆序 | A19 | 逆序比对变体 |
 | 插入换行、空格、零宽字符 | A20、A21、A23 | 归一化删除空白与不可见字符 |
 | 全角同形字符 | A22 | NFKC 归一化为兼容字符 |
+| 凭证拆到两个参数 | A24 | 值成对双向拼接后再比对；B07 验证无关字段拼接不误拒 |
 
-以上变换都不是"任意变换"：加密、密钥派生的替换密码、跨多个非相邻字段的重排、非字符串秘密、以及从未被识别为凭证的秘密仍在保证范围之外。可执行用例清单见 `tests/fixtures/encoding_cases.json`，逐条断言在 `tests/test_credential_encodings.py`。
+以上变换都不是"任意变换"：加密、密钥派生的替换密码、拆到三个及以上字段且顺序被打乱、非字符串秘密、以及从未被识别为凭证的秘密仍在保证范围之外。成对拼接最多处理 16 个参数值，超过后只按出现顺序拼接。可执行用例清单见 `tests/fixtures/encoding_cases.json` 与 `tests/fixtures/cross_field_cases.json`，逐条断言在 `tests/test_credential_encodings.py` 与 `tests/test_cross_field_credentials.py`。
 
 ## 保留的已知漏检
 

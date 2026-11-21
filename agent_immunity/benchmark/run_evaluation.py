@@ -36,7 +36,10 @@ def materialize(case, secret):
     }.get(case.get("encoding"), secret)
     def replace(value):
         if isinstance(value, str):
-            return value.replace("$ENCODED", encoded).replace("$SECRET", secret)
+            # 先替换更长的占位符，避免 $SECRET 抢先吃掉 $SECRET_LEFT。
+            return (value.replace("$SECRET_LEFT", secret[:len(secret) // 2])
+                    .replace("$SECRET_RIGHT", secret[len(secret) // 2:])
+                    .replace("$ENCODED", encoded).replace("$SECRET", secret))
         if isinstance(value, dict):
             return {k: replace(v) for k, v in value.items()}
         if isinstance(value, list):

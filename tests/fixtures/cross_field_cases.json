@@ -1,0 +1,36 @@
+{
+  "secret": "sk-prod-99887766554433221100",
+  "note": "跨字段拆分：未做任何编码变换，只把同一凭证拆到相邻参数。url 值在前、payload 值在后，连接后才构成凭证。",
+  "blocked": [
+    {
+      "id": "split_at_14",
+      "url": "https://example.invalid/sk-prod-998877",
+      "arguments": {
+        "payload": "66554433221100"
+      }
+    },
+    {
+      "id": "split_at_10",
+      "url": "https://example.invalid/sk-prod-99",
+      "arguments": {
+        "payload": "887766554433221100"
+      }
+    }
+  ],
+  "allowed": [
+    {
+      "id": "halves_in_reverse_order",
+      "url": "https://example.invalid/66554433221100",
+      "arguments": {
+        "payload": "sk-prod-998877"
+      }
+    },
+    {
+      "id": "unrelated_fields",
+      "url": "https://example.invalid/status",
+      "arguments": {
+        "payload": "order_count=3 total_amount=66"
+      }
+    }
+  ]
+}
