@@ -39,7 +39,15 @@ class DshTransportTests(unittest.TestCase):
             path = Path(self.binaries.name) / name
             path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             path.chmod(0o755)
-            self.paths[name] = str(path)
+            # 先规范化：Windows 上 resolve() 会把 8.3 短名展开成完整目录名，
+            # 适配器内部也做同样处理，断言要与之一致。
+            self.paths[name] = str(path.resolve())
+        # WSL 侧看到的是发行版内的 POSIX 路径，与宿主临时目录无关。
+        self.wsl_paths = {
+            "node": "/usr/local/bin/node",
+            "dsh": "/usr/local/bin/dsh",
+            "timeout": "/usr/bin/timeout",
+        }
         self.work_root = WORK_ROOT / ("case-" + uuid.uuid4().hex[:12])
 
     def _fake_run(self, calls, audit_overrides):
@@ -55,7 +63,8 @@ class DshTransportTests(unittest.TestCase):
                     return _Completed(stdout=b"0.1.1-rc.2\n")
                 return _Completed(stdout=b"v24.20.0\n")
             if "bash" in args:
-                found = "\n".join(self.paths[name] for name in ("node", "dsh", "timeout"))
+                # WSL 侧固定发现脚本一次返回发行版内的三个 POSIX 路径。
+                found = "\n".join(self.wsl_paths[name] for name in ("node", "dsh", "timeout"))
                 return _Completed(stdout=(found + "\n").encode())
             run_dir = (Path(cwd).parent if cwd
                        else Path(args[args.index("--patch") + 1]).parent)
@@ -125,7 +134,7 @@ class DshTransportTests(unittest.TestCase):
         self.assertIn("--distribution", call["args"])
         self.assertIn("--cd", call["args"])
         self.assertIn("--exec", call["args"])
-        self.assertEqual(call["args"][call["args"].index("--exec") + 1], self.paths["timeout"])
+        self.assertEqual(call["args"][call["args"].index("--exec") + 1], self.wsl_paths["timeout"])
         self.assertIsNone(call["cwd"])
 
     def test_provider_comes_from_environment_not_hardcoded(self):
