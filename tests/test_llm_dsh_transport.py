@@ -52,15 +52,20 @@ class DshTransportTests(unittest.TestCase):
 
     def _fake_run(self, calls, audit_overrides):
         overrides = audit_overrides or {}
+        # wslpath 的映射结果只是发行版内路径，真实文件仍写在宿主目录里；
+        # 记下映射关系，写出审计结果时按宿主路径定位 run_dir。
+        translated_to_host = {}
 
         def fake_run(args, timeout=30, cwd=None, **kwargs):
             self.assertNotIn("shell", kwargs, "不得通过 shell 拼接命令")
             calls.append({"args": [str(item) for item in args], "cwd": cwd})
             if "wslpath" in args:
                 # 模拟 wslpath：把宿主路径映射成发行版内的 /mnt/<盘符>/... 形式。
-                text = str(args[-1]).replace("\\", "/")
+                host = str(args[-1])
+                text = host.replace("\\", "/")
                 if len(text) > 1 and text[1] == ":":
                     text = "/mnt/" + text[0].lower() + text[2:]
+                translated_to_host[text] = host
                 return _Completed(stdout=(text + "\n").encode())
             if "--version" in args:
                 if any(str(item).endswith("dsh") for item in args):
@@ -70,8 +75,11 @@ class DshTransportTests(unittest.TestCase):
                 # WSL 侧固定发现脚本一次返回发行版内的三个 POSIX 路径。
                 found = "\n".join(self.wsl_paths[name] for name in ("node", "dsh", "timeout"))
                 return _Completed(stdout=(found + "\n").encode())
-            run_dir = (Path(cwd).parent if cwd
-                       else Path(args[args.index("--patch") + 1]).parent)
+            if cwd:
+                run_dir = Path(cwd).parent
+            else:
+                patch = str(args[args.index("--patch") + 1])
+                run_dir = Path(translated_to_host.get(patch, patch)).parent
             audit = {
                 "status": "completed", "model": MODEL,
                 "provider": os.environ.get("DSH_EVAL_PROVIDER", DEFAULT_PROVIDER),
