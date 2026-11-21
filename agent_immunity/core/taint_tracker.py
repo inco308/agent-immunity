@@ -1,6 +1,11 @@
 """有限凭证表示检测；不是任意程序或模型推理的数据流跟踪器。"""
 import base64
+import binascii
+import codecs
+import json
 import re
+import unicodedata
+import zlib
 from urllib.parse import unquote
 from .models import TaintTag
 from .policy import canonical, strict_json
@@ -21,6 +26,144 @@ REDACTION_MARKERS = frozenset({
 
 def is_redaction_marker(value):
     return value.strip().casefold() in REDACTION_MARKERS
+
+# --- 凭证表示的归一化与有界解码 ---
+# 归一化会删除空白，过短的比对单元会放大误报；只有达到该长度的变体参与子串比对。
+MIN_NORMALIZED = 8
+# 单条候选参与解码扫描的最大字节数；更长的文本只做原文与归一化比对。
+MAX_DECODE_BYTES = 65536
+# 数字数组还原的字符数上限。
+MAX_CHARCODES = 8192
+# 零宽与格式控制字符；归一化时删除，避免用不可见字符打断凭证。
+INVISIBLE = dict.fromkeys(map(ord, "\u00ad\u200b\u200c\u200d\u200e\u200f\u2060\ufeff"), None)
+
+
+def normalize(text):
+    """NFKC 归一化后删除不可见字符与全部空白，再 casefold。"""
+    folded = unicodedata.normalize("NFKC", text).translate(INVISIBLE)
+    return "".join(folded.split()).casefold()
+
+
+def _printable_ratio(data):
+    if not data:
+        return 0.0
+    sample = data[:4096]
+    good = sum(1 for byte in sample if 32 <= byte < 127 or byte in (9, 10, 13))
+    return good / len(sample)
+
+
+def _is_readable(text):
+    """解码结果必须基本可读，避免把二进制垃圾当成候选文本放大扫描成本。"""
+    if not text:
+        return False
+    return _printable_ratio(text.encode("utf-8", errors="ignore")) >= 0.85
+
+
+def _decode_b64(text):
+    candidate = text.strip()
+    if len(candidate) < 8:
+        return []
+    padded = candidate + "=" * (-len(candidate) % 4)
+    results = []
+    decoders = (lambda value: base64.b64decode(value, validate=False), base64.urlsafe_b64decode)
+    for decoder in decoders:
+        try:
+            data = decoder(padded)
+        except (binascii.Error, ValueError):
+            continue
+        if data and data not in results:
+            results.append(data)
+    return results
+
+
+def _decode_hex(text):
+    compact = "".join(text.split())
+    if len(compact) < 8 or len(compact) % 2 or any(ch not in "0123456789abcdefABCDEF" for ch in compact):
+        return []
+    try:
+        return [bytes.fromhex(compact)]
+    except ValueError:
+        return []
+
+
+def _inflate(data):
+    try:
+        return [zlib.decompressobj().decompress(data, MAX_DECODE_BYTES)]
+    except zlib.error:
+        return []
+
+
+def _charcodes(text):
+    stripped = text.strip()
+    if not (stripped.startswith("[") and stripped.endswith("]")):
+        return []
+    try:
+        values = json.loads(stripped)
+    except ValueError:
+        return []
+    if not isinstance(values, list) or not values or len(values) > MAX_CHARCODES:
+        return []
+    if any(not isinstance(item, int) or not 0 <= item <= 0x10FFFF for item in values):
+        return []
+    try:
+        return ["".join(chr(item) for item in values)]
+    except (ValueError, OverflowError):
+        return []
+
+
+def decode_once(text):
+    """产出单层解码结果：百分号、Base64、十六进制、zlib、ROT13 与数字数组。"""
+    if len(text.encode("utf-8", errors="ignore")) > MAX_DECODE_BYTES:
+        return
+    seen = set()
+    unquoted = unquote(text)
+    if unquoted != text:
+        seen.add(unquoted)
+        yield unquoted
+    for data in _decode_b64(text) + _decode_hex(text):
+        # 先尝试解压，再判断是否可读：Base64 里包的可能是 zlib 字节。
+        for item in _inflate(data) + [data]:
+            try:
+                decoded = item.decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+            if _is_readable(decoded) and decoded not in seen:
+                seen.add(decoded)
+                yield decoded
+    for decoded in _charcodes(text):
+        if decoded not in seen:
+            seen.add(decoded)
+            yield decoded
+    rotated = codecs.encode(text, "rot13")
+    if rotated != text and rotated not in seen:
+        yield rotated
+
+
+def decoded_forms(text, depth=2):
+    """产出候选原文与至多 depth 层解码结果；失败或超限时安静跳过。"""
+    yield text
+    frontier = [text]
+    for _ in range(depth):
+        following = []
+        for item in frontier:
+            for decoded in decode_once(item):
+                yield decoded
+                following.append(decoded)
+        frontier = following
+        if not frontier:
+            return
+
+
+def secret_variants(secret):
+    """已知凭证的比对变体：归一化文本、常见编码与逆序。"""
+    raw = secret.encode("utf-8")
+    variants = {normalize(secret), normalize(secret[::-1])}
+    for encoded in (base64.b64encode(raw).decode("ascii"),
+                    base64.urlsafe_b64encode(raw).decode("ascii"),
+                    raw.hex(), raw.hex().upper()):
+        variants.add(normalize(encoded))
+        variants.add(normalize(encoded.rstrip("=")))
+    return {item for item in variants if item}
 
 def strings(value, depth=0):
     if depth > 32:
@@ -87,15 +230,22 @@ class TaintTracker:
         self._check_size(arguments)
         if self._extract(arguments):
             return True
-        candidates = []
-        for value in strings(arguments):
-            candidates.extend((value, unquote(value), unquote(unquote(value))))
+        if not self._secrets:
+            return False
+        variants = set()
         for secret in self._secrets:
-            raw = secret.encode("utf-8")
-            variants = {secret, base64.b64encode(raw).decode(), base64.urlsafe_b64encode(raw).decode(), raw.hex(), raw.hex().upper()}
-            variants |= {v.rstrip("=") for v in variants if v}
-            if any(variant in text for variant in variants for text in candidates):
+            variants |= secret_variants(secret)
+        # 归一化删除空白后，过短的比对单元容易撞上普通文本，只对较长变体启用。
+        matched = {variant for variant in variants if len(variant) >= MIN_NORMALIZED}
+        short = [secret for secret in self._secrets if len(normalize(secret)) < MIN_NORMALIZED]
+        for text in strings(arguments):
+            if any(secret in text for secret in short):
                 return True
+            if not matched:
+                continue
+            for form in decoded_forms(text):
+                if any(variant in normalize(form) for variant in matched):
+                    return True
         return False
 
     @property
