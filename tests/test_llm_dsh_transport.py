@@ -57,7 +57,11 @@ class DshTransportTests(unittest.TestCase):
             self.assertNotIn("shell", kwargs, "不得通过 shell 拼接命令")
             calls.append({"args": [str(item) for item in args], "cwd": cwd})
             if "wslpath" in args:
-                return _Completed(stdout=(str(args[-1]) + "\n").encode())
+                # 模拟 wslpath：把宿主路径映射成发行版内的 /mnt/<盘符>/... 形式。
+                text = str(args[-1]).replace("\\", "/")
+                if len(text) > 1 and text[1] == ":":
+                    text = "/mnt/" + text[0].lower() + text[2:]
+                return _Completed(stdout=(text + "\n").encode())
             if "--version" in args:
                 if any(str(item).endswith("dsh") for item in args):
                     return _Completed(stdout=b"0.1.1-rc.2\n")
