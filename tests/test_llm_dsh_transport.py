@@ -179,6 +179,20 @@ class DshTransportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             DshBackend(model=MODEL, timeout=30, work_root=REPO / "tests")
 
+    def test_availability_flag_only_after_verified_generation(self):
+        with self.patched("linux"):
+            backend = self.backend()
+            self.assertFalse(backend.metadata()["availability_verified"])
+            self.generate(backend)
+            self.assertTrue(backend.metadata()["availability_verified"])
+
+        failed = {"guard_self_test_denied": False}
+        with self.patched("linux", audit_overrides=failed):
+            backend = self.backend()
+            with self.assertRaises(RuntimeError):
+                self.generate(backend)
+            self.assertFalse(backend.metadata()["availability_verified"])
+
 
 if __name__ == "__main__":
     unittest.main()

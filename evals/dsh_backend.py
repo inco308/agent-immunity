@@ -35,6 +35,8 @@ class DshBackend:
         self.distro = os.environ.get("DSH_WSL_DISTRO", "Ubuntu")
         # 提供方由部署侧配置决定；评测不得假定某个固定标识。
         self.provider = os.environ.get("DSH_EVAL_PROVIDER", "deepseek-official")
+        # 只有模型实际生成并通过身份核对后，才在元数据里声明可用性已验证。
+        self._availability_verified = False
         if not isinstance(self.provider, str) or not re.fullmatch(r"[A-Za-z0-9._-]+", self.provider):
             raise ValueError("DSH_EVAL_PROVIDER 必须是非空提供方标识")
         self.wsl = shutil.which("wsl.exe") or shutil.which("wsl")
@@ -135,6 +137,7 @@ class DshBackend:
             "node_version": self.node_version,
             "native_tools": "全局单调拒绝保护；模型工具 schema 置空",
             "guard_self_test_required": True, "seed_supported": False,
+            "availability_verified": self._availability_verified,
             "schema_enforcement": "提示词约束；上层执行器必须校验 JSON schema",
             "timeout_seconds": self.timeout,
         }
@@ -238,5 +241,6 @@ class DshBackend:
         content = audit.get("content")
         if not isinstance(content, str) or not content.strip():
             raise RuntimeError("dsh 没有返回规划器正文")
+        self._availability_verified = True
         return {"content": content, "usage": audit.get("usage", {}),
                 "model": audit["model"], "elapsed_seconds": elapsed}
