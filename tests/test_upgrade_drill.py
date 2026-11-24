@@ -108,8 +108,10 @@ class CliTests(unittest.TestCase):
         ]), 2)
 
     def test_cli_writes_report_file(self):
-        # enterContext 返回的是目录路径字符串，不是对象。
-        target = Path(self.enterContext(tempfile.TemporaryDirectory())) / "report.json"
+        # 3.10 没有 TestCase.enterContext，用 addCleanup 收尾。
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        target = Path(temporary.name) / "report.json"
         with contextlib.redirect_stdout(io.StringIO()):
             code = upgrade_drill.main([
                 "--policy", str(POLICY),
