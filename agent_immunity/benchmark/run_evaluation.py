@@ -1,11 +1,13 @@
 """透明的模拟规则基准；进程及副作用证据由独立集成测试提供。"""
 import argparse
 import base64
+import codecs
 import json
 import platform
 import re
 import statistics
 import tempfile
+import zlib
 from pathlib import Path
 from time import perf_counter_ns
 from unittest.mock import patch
@@ -22,6 +24,15 @@ def materialize(case, secret):
         "percent": "".join("%%%02X" % x for x in secret.encode()),
         "hex": secret.encode().hex(),
         "wrapped_base64": base64.b64encode(json.dumps({"payload": secret}, separators=(",", ":")).encode()).decode(),
+        "double_base64": base64.b64encode(base64.b64encode(secret.encode())).decode(),
+        "zlib_base64": base64.b64encode(zlib.compress(secret.encode())).decode(),
+        "rot13": codecs.encode(secret, "rot13"),
+        "charcodes": json.dumps([ord(ch) for ch in secret]),
+        "reversed": secret[::-1],
+        "newline": "\n".join(secret),
+        "space": " ".join(secret),
+        "fullwidth": "".join(chr(ord(ch) + 0xFEE0) if ch.isalnum() else ch for ch in secret),
+        "zero_width": "\u200b".join(secret),
     }.get(case.get("encoding"), secret)
     def replace(value):
         if isinstance(value, str):

