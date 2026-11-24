@@ -29,7 +29,9 @@ py -3.12 -m venv artifacts/llm-venv
 artifacts/llm-venv/Scripts/python.exe -m pip install --require-hashes -r interop/requirements.lock
 ```
 
-以下命令中的 `python` 应指向该环境。Linux 可用 `python3.12 -m venv artifacts/llm-venv` 创建环境，并使用 `artifacts/llm-venv/bin/python`。Ollama 应已启动且已有所选模型；普通评测入口不会自行下载模型。Codex CLI 应已安装并登录。当前 dsh 适配器用于 Windows 调用 WSL 原生安装，默认发行版为 `Ubuntu`，可用 `DSH_WSL_DISTRO` 指定现有发行版；它拒绝落到 Windows shim 的 Node 或 dsh。
+以下命令中的 `python` 应指向该环境。Linux 可用 `python3.12 -m venv artifacts/llm-venv` 创建环境，并使用 `artifacts/llm-venv/bin/python`。Ollama 应已启动且已有所选模型；普通评测入口不会自行下载模型。Codex CLI 应已安装并登录。
+
+dsh 适配器按宿主选择传输：Windows 经 WSL 原生发行版调用，默认发行版为 `Ubuntu`，可用 `DSH_WSL_DISTRO` 指定现有发行版；POSIX 宿主直接调用本机安装的 `node`、`dsh` 与 `timeout`。两种传输都拒绝落到 Windows 挂载路径的替身，并共用同一套哨兵拒绝自检、模型与提供方身份核对、原生工具调用计数与超时约束，结果中的 `transport` 字段记录实际传输。提供方标识由部署侧决定，可用 `DSH_EVAL_PROVIDER` 覆盖，默认 `deepseek-official`；模型必须显式传入 `--model`，适配器不假定某个默认模型在所有部署中都存在。
 
 完整场景运行入口：
 
@@ -38,6 +40,8 @@ python -m evals.run_live --backend ollama --model qwen3.5:4b --expected-digest d
 python -m evals.run_live --backend codex --model gpt-6.1-sol --split all --output artifacts/llm-eval/codex.json
 python -m evals.run_live --backend dsh --model deepseek-v4-flash --split all --output artifacts/llm-eval/dsh.json
 ```
+
+`--model` 必须与目标部署实际可用的模型一致。同一后端在不同宿主上可能只有不同的模型名，替换模型必须使用单独的结果文件，不得并入已有对照表。
 
 Ollama 本地推理较慢时，可明确运行较短子集，并使用单独的结果文件：
 
