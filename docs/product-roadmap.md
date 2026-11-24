@@ -11,6 +11,11 @@
 | 管理本机工具进程与凭证 | Docker MCP Gateway 提供容器化运行、按服务注入凭证和调用跟踪。[官方说明](https://docs.docker.com/ai/mcp-catalog-and-toolkit/mcp-gateway/) | 优先尝试与现有隔离层组合，用副作用测试验证具体部署。 |
 | 管理多团队、多服务 | IBM ContextForge 提供服务注册、聚合、集中管理和可扩展插件。[项目说明](https://github.com/IBM/mcp-context-forge) · [插件目录](https://ibm.github.io/mcp-context-forge/using/plugins/plugins/) | 先验证一份策略在多个工具间复用的维护成本，再决定是否需要集中控制服务。 |
 | 单个编辑器里的操作确认 | VS Code 提供代理工具审批设置。[官方文档](https://code.visualstudio.com/docs/agents/run/approvals) | 试点应将接入时间、误报和策略可复用性与宿主原有审批及直接在工具中校验参数的方案比较。 |
+| 需要默认拒绝与版本化策略，但不想自己实现决策 | `SecAI-Hub/mcp-firewall` 默认拒绝 server/tool/参数，带会话污点、链式审计与 Ed25519 决策回执；它只做决策，明确要求集成方保证拒绝被执行。[已读源码对照](competitive-landscape.md) | 不重复造决策服务。本项目的差异是"决策与执行合一"，而审计持久化、身份角色与污点跨连接存活是已知落后项，需在部署说明中写明。 |
+| 需要按最小权限约束工具调用 | Progent 提出对工具调用的可编程权限控制与动态收窄。[论文](http://export.arxiv.org/abs/2504.11703) | 策略模型对齐该思路，说明文档不宣称原创机制。 |
+| 需要在上线前发现组件风险 | Snyk Agent Scan（原 mcp-scan）发现 agent、MCP server 与技能并扫描注入与漏洞，不参与运行时。[项目说明](https://github.com/snyk/agent-scan) | 与扫描器互补：扫描回答"有没有风险组件"，本项目回答"这次升级是否让已有策略失效"。 |
+
+定位对照、证据等级与尚未核实的条目见[定位重合的项目与产品](competitive-landscape.md)。
 
 ## 交付与验收
 
