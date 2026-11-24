@@ -1,0 +1,18 @@
+{
+ "tools": [
+  {
+   "name": "get_current_time",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "timezone": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "timezone"
+    ]
+   }
+  }
+ ]
+}

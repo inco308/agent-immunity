@@ -1,0 +1,16 @@
+{
+ "version": 1,
+ "workspace": ".",
+ "tools": {
+  "convert_time": {
+   "capabilities": [
+    "compute"
+   ],
+   "parameters": {
+    "source_timezone": "string",
+    "time": "string",
+    "target_timezone": "string"
+   }
+  }
+ }
+}
