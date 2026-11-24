@@ -1,0 +1,44 @@
+{
+ "tools": [
+  {
+   "name": "get_current_time",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "timezone": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "timezone"
+    ]
+   }
+  },
+  {
+   "name": "convert_time",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "source_timezone": {
+      "type": "string"
+     },
+     "time": {
+      "type": "string"
+     },
+     "target_timezone": {
+      "type": "string"
+     },
+     "locale": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "source_timezone",
+     "time",
+     "target_timezone",
+     "locale"
+    ]
+   }
+  }
+ ]
+}
