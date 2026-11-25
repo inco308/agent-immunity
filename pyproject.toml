@@ -26,6 +26,8 @@ dependencies = []
 agent-immunity = "agent_immunity.mcp_stdio:main"
 agent-immunity-check = "agent_immunity.doctor:main"
 agent-immunity-capture = "agent_immunity.capture:main"
+agent-immunity-probe = "agent_immunity.probe:main"
+agent-immunity-drill = "agent_immunity.drill:main"
 
 [project.optional-dependencies]
 # 采集上游 tools/list 快照需要官方 MCP SDK；核心运行时仍不依赖它。

@@ -1,0 +1,69 @@
+{
+ "schema_version": 1,
+ "scope": "UPSTREAM_OBSERVATIONS",
+ "upstream": {
+  "command": [
+   "artifacts/drill-2026.11.18/bin/mcp-server-time"
+  ],
+  "mcp_sdk": "1.30.0"
+ },
+ "calls": [
+  {
+   "id": "convert-tokyo",
+   "tool": "convert_time",
+   "arguments": {
+    "source_timezone": "UTC",
+    "time": "09:00",
+    "target_timezone": "Asia/Tokyo"
+   },
+   "is_error": false,
+   "text": "{\n  \"source\": {\n    \"timezone\": \"UTC\",\n    \"datetime\": \"2026-11-25T09:00:00+00:00\",\n    \"day_of_week\": \"Wednesday\",\n    \"is_dst\": false\n  },\n  \"target\": {\n    \"timezone\": \"Asia/Tokyo\",\n    \"datetime\": \"2026-11-25T18:00:00+09:00\",\n    \"day_of_week\": \"Wednesday\",\n    \"is_dst\": false\n  },\n  \"time_difference\": \"+9.0h\",\n  \"later_occurrence\": null\n}",
+   "json": {
+    "source": {
+     "timezone": "UTC",
+     "datetime": "2026-11-25T09:00:00+00:00",
+     "day_of_week": "Wednesday",
+     "is_dst": false
+    },
+    "target": {
+     "timezone": "Asia/Tokyo",
+     "datetime": "2026-11-25T18:00:00+09:00",
+     "day_of_week": "Wednesday",
+     "is_dst": false
+    },
+    "time_difference": "+9.0h",
+    "later_occurrence": null
+   },
+   "structured": {
+    "source": {
+     "timezone": "UTC",
+     "datetime": "2026-11-25T09:00:00+00:00",
+     "day_of_week": "Wednesday",
+     "is_dst": false
+    },
+    "target": {
+     "timezone": "Asia/Tokyo",
+     "datetime": "2026-11-25T18:00:00+09:00",
+     "day_of_week": "Wednesday",
+     "is_dst": false
+    },
+    "time_difference": "+9.0h",
+    "later_occurrence": null
+   },
+   "shape": {
+    "source": "object",
+    "source.timezone": "string",
+    "source.datetime": "string",
+    "source.day_of_week": "string",
+    "source.is_dst": "boolean",
+    "target": "object",
+    "target.timezone": "string",
+    "target.datetime": "string",
+    "target.day_of_week": "string",
+    "target.is_dst": "boolean",
+    "time_difference": "string",
+    "later_occurrence": "null"
+   }
+  }
+ ]
+}
