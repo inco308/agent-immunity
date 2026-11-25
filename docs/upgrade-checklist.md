@@ -49,10 +49,10 @@ python -m agent_immunity.doctor --policy <你的策略>.json --catalog <升级�
 
 ```text
 agent-immunity-capture --output artifacts/catalog-after.json -- <升级后上游命令>
-python -m scripts.upgrade_drill \
+agent-immunity-drill \
   --policy <你的策略>.json \
-  --old-catalog <升级前目录>.json \
-  --new-catalog <升级后目录>.json \
+  --old-catalog artifacts/catalog-before.json \
+  --new-catalog artifacts/catalog-after.json \
   --output artifacts/upgrade-drill.json
 ```
 
@@ -73,14 +73,51 @@ python -m scripts.upgrade_drill \
 
 ### 6. 业务验收（不能省略）
 
-目录检查看不出行为变化。用**同一个固定输入**在升级前后各跑一次真实调用，比较返回值：
+目录检查看不出行为变化，所以要用**同一组固定输入**在升级前后各跑一次真实调用。这一步可以自动化：把调用写进清单，分别采集两份观测，再交给演练工具比较。
 
-- 字段集合与类型（是否多了/少了字段）
-- 缺省值（必填放松后，不传该字段会得到什么）
-- 错误码与错误文本
-- 数值/时区/排序等业务语义
+调用清单 `calls.json`：
 
-判定标准是"同输入同语义"，不是"没报错"。本仓库 [Codex 时区试点](codex-time-pilot.md)用的判据就是这类：两个版本都给出 UTC 09:00 → 东京 18:00（+9.0h），但新版额外返回 `day_of_week`。
+```json
+{"version": 1, "calls": [
+  {"id": "convert-tokyo", "tool": "convert_time",
+   "arguments": {"source_timezone": "UTC", "time": "09:00", "target_timezone": "Asia/Tokyo"}}]}
+```
+
+分别采集观测（需要 SDK，见第 2 步的环境说明）：
+
+```text
+agent-immunity-probe --calls calls.json --output artifacts/obs-before.json -- <升级前上游命令>
+agent-immunity-probe --calls calls.json --output artifacts/obs-after.json  -- <升级后上游命令>
+```
+
+断言文件 `expectations.json` 写"必须保持不变的值"和"随运行变化的路径"：
+
+```json
+{"version": 1,
+ "ignore": ["source.datetime", "target.datetime"],
+ "expect": [
+   {"id": "convert-tokyo", "path": "time_difference", "equals": "+9.0h"},
+   {"id": "convert-tokyo", "contains": "T18:00:00+09:00"}]}
+```
+
+再跑一次演练，把观测接进同一份报告：
+
+```text
+agent-immunity-drill \
+  --policy <你的策略>.json \
+  --old-catalog artifacts/catalog-before.json \
+  --new-catalog artifacts/catalog-after.json \
+  --old-observations artifacts/obs-before.json \
+  --new-observations artifacts/obs-after.json \
+  --expect expectations.json \
+  --output artifacts/upgrade-drill.json
+```
+
+判定分三种：**断言失败**直接判错（退出码 1）；字段增删、类型或取值变化判 `review`（退出码 2），需要人确认是否可接受；两者都没有才是 `pass`。观测文件可能包含上游返回的真实数据，按敏感材料保存。
+
+`ignore` 只对路径生效（前缀匹配也生效），用来排除时间戳、随机 id 之类每次都会变的值。断言不写"哪些字段必须存在"，只写"必须成立的值"，这样上游新增字段不会把断言弄坏——新增字段由字段差异单独报出来。
+
+人工仍要确认的是**语义**：字段没变、断言也通过，不代表业务含义没变（例如时区名从 IANA 改成别名、排序规则变化）。
 
 ### 7. 副作用验收
 
@@ -114,23 +151,23 @@ python -m scripts.upgrade_drill \
 
 2026-11-21，本机 Linux（WSL2）、Python 3.14.4。两个版本都从 PyPI 安装到独立虚拟环境，用 `interop.capture_catalog` 实际采集 `tools/list`，再跑上面的第 5 步。夹具保存在 `tests/fixtures/upgrade/`，回归见 `tests/test_upgrade_drill.py`。
 
-| 升级 | 目录变化 | 体检（doctor） | 演练判定 |
-| --- | --- | --- | --- |
-| 2025.8.4 → 2025.9.25 | 无（工具与参数完全一致） | 两次 `pass` | `pass`（退出码 0） |
-| 2025.9.25 → 2026.11.18 | 新增 `get_time_ago`；`convert_time` 必填由 3 项降为 1 项；`get_current_time` 变为无必填 | 两次 `pass`，`hidden_tools` 由 1 变 2 | `review`（退出码 2） |
+| 升级 | 目录变化 | 观测变化 | 体检（doctor） | 演练判定 |
+| --- | --- | --- | --- | --- |
+| 2025.8.4 → 2025.9.25 | 无（工具与参数完全一致） | `source.day_of_week`、`target.day_of_week` 新增 | 两次 `pass` | `review`（退出码 2） |
+| 2025.9.25 → 2026.11.18 | 新增 `get_time_ago`；`convert_time` 必填由 3 项降为 1 项；`get_current_time` 变为无必填 | `later_occurrence` 新增、开始提供 `structuredContent` | 两次 `pass`，`hidden_tools` 由 1 变 2 | `review`（退出码 2） |
 
-第二行是这份清单存在的理由：**doctor 单独跑两次都是 `pass`**，只有把两个目录放在一起比较，才能看出"上游放松了必填字段"。
+两行都说明同一件事：**doctor 单独跑两次都是 `pass`**。第一行更极端——目录完全一致，只有观测比较才能看出输出多了字段；只看目录会得出"升级无影响"的错误结论。
 
-第一行说明相反的风险：目录完全一致，但两个版本的**输出**不同（新版多了 `day_of_week`）。只看目录会得出"升级无影响"的错误结论——这正是第 6 步不能省的原因。
+两次演练的断言（`time_difference == "+9.0h"`、返回含 `T18:00:00+09:00`）在三个版本上全部通过，说明这些关键业务值没有退化。夹具与回归见 `tests/fixtures/upgrade/`、`tests/test_observation_diff.py`。
 
 一个环境细节：`mcp-server-time 2025.8.4` 在 `mcp 2.3.0` 下直接 `ImportError`（它 import 的是旧名 `McpError`，2.x 改名为 `MCPError`）。想让旧版跑起来，采集环境要固定在 `mcp 1.30.0`。这类"旧上游在新 SDK 下起不来"属于升级链自身的风险，清单第 3 步的基线体检能提前暴露它。
 
 ## 已知覆盖不到的变化
 
-以下变化**不会**被目录比较发现，必须靠第 6、7 步：
+目录比较看不出行为；观测比较能看出字段增删、类型与取值变化，但以下仍然看不出来：
 
-- 输出结构、输出字段语义、错误码变化；
-- 上游放宽约束（必填变可选、类型变宽、新增可选参数）；
-- 同名工具的行为改变（同名不同义）；
+- 字段没变、取值也在断言范围内，但**语义**变了（时区名从 IANA 改为别名、排序规则变化、单位换算口径变化）；
+- 上游放宽约束后悄悄启用的默认值（能看出必填放松，看不出默认值取得合不合理）；
+- 同名工具在同名参数上改变行为，且本次调用没有覆盖到；
 - 上游在运行期动态注册工具，或以不同名提供同一能力；
-- 参数值的语义变化（例如时区名从 IANA 改为别名）。
+- 上游在调用内部产生副作用（写文件、发请求），这属于第 7 步。

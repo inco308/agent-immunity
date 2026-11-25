@@ -1,0 +1,24 @@
+{
+ "version": 1,
+ "note": "日期随运行日变化，故忽略两个 datetime；其余字段与取值应当稳定。",
+ "ignore": [
+  "source.datetime",
+  "target.datetime"
+ ],
+ "expect": [
+  {
+   "id": "convert-tokyo",
+   "path": "time_difference",
+   "equals": "+9.0h"
+  },
+  {
+   "id": "convert-tokyo",
+   "path": "target.timezone",
+   "equals": "Asia/Tokyo"
+  },
+  {
+   "id": "convert-tokyo",
+   "contains": "T18:00:00+09:00"
+  }
+ ]
+}

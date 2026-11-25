@@ -1,0 +1,10 @@
+{
+ "version": 1,
+ "calls": [
+  {
+   "id": "convert-tokyo",
+   "tool": "convert_time",
+   "arguments": {"source_timezone": "UTC", "time": "09:00", "target_timezone": "Asia/Tokyo"}
+  }
+ ]
+}

@@ -30,7 +30,7 @@ Agent Immunity 为本地 MCP stdio 工具提供显式策略检查。维护者可
 python -m agent_immunity.doctor --policy examples/policy.json --json
 ```
 
-升级上游之前，按[上游升级前的验收清单](docs/upgrade-checklist.md)依次做策略体检、目录漂移演练、业务验收与副作用验收；其中漂移演练用 `python -m scripts.upgrade_drill` 比较升级前后两份 `tools/list` 快照。
+升级上游之前，按[上游升级前的验收清单](docs/upgrade-checklist.md)依次做策略体检、目录漂移演练、业务验收与副作用验收；其中漂移演练用 `agent-immunity-drill` 比较升级前后两份 `tools/list` 快照与调用观测。
 
 在克隆后的仓库根目录执行：
 
