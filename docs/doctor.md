@@ -20,7 +20,7 @@ python -m agent_immunity.doctor --policy examples/policy.json --catalog artifact
 | 退出码 | 状态 | 行动 |
 | --- | --- | --- |
 | 0 | `pass` | 所选范围的检查通过。仅给策略时范围为 `policy`；提供目录后为 `policy_and_catalog`。 |
-| 1 | `error` | 修正无效输入、策略落在声明的可写根内、无法匹配的执行白名单条目、缺少登记工具或输入描述冲突。 |
+| 1 | `error` | 修正无效输入、策略落在声明的可写根内、无法匹配的执行白名单条目、缺少登记工具或输入描述冲突。`POLICY_INVALID` 的 `message` 会指出具体字段或工具（例如"工具 convert_time 含不支持的字段: typo_field"），但**不回显配置取值**——版本号、参数类型、路径、限额和命令行都只报字段名，请对照策略文件自行核对。 |
 | 2 | `review` | 上游使用超出自动检查范围的 schema 约束。请审阅原始描述和实现，补真实调用测试。CLI 参数错误也遵循 argparse 的退出码 2。 |
 
 例如，上游接受 number 时，本地只公开 integer 属于合理收窄。上游明确禁止额外属性时，本地多公开一个字段会给出 `FIELD_NOT_ACCEPTED`。上游增加必填字段会给出 `REQUIRED_MISMATCH`。枚举、嵌套对象限制、引用或组合条件会给出 `SCHEMA_REVIEW`。上游另行公开但本地未登记的工具只计入 `hidden_tools`。有限规则检查的是**本地公开输入描述**与上游声明的关系，执行白名单的取值限制另行校验。

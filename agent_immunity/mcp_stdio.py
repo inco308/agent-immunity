@@ -5,7 +5,7 @@ import subprocess
 import sys
 import threading
 import time
-from . import DynamicImmunityEngine, Policy, ToolCall, ToolResult, __version__
+from . import DynamicImmunityEngine, Policy, PolicyError, ToolCall, ToolResult, __version__
 from .core.policy import canonical, strict_json
 
 VERSION = "2025-06-18"
@@ -303,6 +303,8 @@ def main():
         parser.error("需要上游命令，timeout 必须介于 0 和 300 秒")
     try:
         policy = Policy.load(args.policy)
+    except PolicyError as error:
+        parser.error(f"无法加载本地策略：{error}")
     except (OSError, ValueError, TypeError, RecursionError):
         parser.error("无法加载有效的本地策略")
     return StdioProxy(policy, command, args.timeout).run()
