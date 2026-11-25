@@ -20,7 +20,7 @@
 
 ## 安装和运行
 
-先准备 Python 3.12 与 Node 24.22.1，在仓库根目录运行。命令只安装到工作区；无需修改全局 MCP 客户端配置。
+先准备 Python 3.12 与 Node 24.22.1，在仓库根目录运行。命令只安装到工作区；无需修改全局 MCP 客户端配置。只采目录、不做端到端互操作时，可用发行包的 `agent-immunity-capture`，见[体检说明](doctor.md)。
 
 Windows PowerShell：
 

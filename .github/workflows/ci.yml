@@ -8,7 +8,8 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        python: ["3.10", "3.12"]
+        # 核心运行时只依赖标准库；新增版本按本地实测与 CI 结果逐步放开。
+        python: ["3.10", "3.12", "3.13", "3.14"]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:

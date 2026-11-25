@@ -8,7 +8,9 @@
 python -m agent_immunity.doctor --policy examples/policy.json
 ```
 
-要核对上游，将所有分页中的工具名和 `inputSchema` 存为 UTF-8 JSON，传给 `--catalog`。采集器直接连接上游，因为代理返回的列表已经用本地策略替换了输入描述。快照会在已识别的 schema 节点去掉文档注解，包括描述、示例和默认值。下面的示例从源码仓库运行，Python 环境需先按 [互操作指南](interop.md) 安装锁定的 SDK 依赖。示例上游只依赖标准库。
+要核对上游，将所有分页中的工具名和 `inputSchema` 存为 UTF-8 JSON，传给 `--catalog`。采集器直接连接上游，因为代理返回的列表已经用本地策略替换了输入描述。快照会在已识别的 schema 节点去掉文档注解，包括描述、示例和默认值。
+
+采集需要官方 MCP SDK，核心运行时不需要。安装 wheel 后执行 `python -m pip install 'agent-immunity[interop]'` 即可使用 `agent-immunity-capture`；仓库内也可用 `python -m agent_immunity.capture`，或按 [互操作指南](interop.md) 用哈希锁定依赖。缺少 SDK 时采集器会给出安装提示并以退出码 2 结束。下面的示例从源码仓库运行，示例上游只依赖标准库。
 
 ```text
 python -m interop.capture_catalog --output artifacts/upstream-tools.json -- python examples/local_tools.py

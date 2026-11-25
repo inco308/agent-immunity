@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import anyio
 
-from interop import capture_catalog as catalog
+from agent_immunity import capture as catalog
 from interop.sdk_cancellation import process_is_running
 
 

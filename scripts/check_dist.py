@@ -45,7 +45,9 @@ def verify_members(package, runtime):
                     raise ValueError(f"sdist 成员类型或根路径异常：{item.name}")
                 files.add(item.name[len(prefix):])
         required = runtime | {"README.md", "LICENSE", "pyproject.toml", "PKG-INFO"}
-        metadata = {"PKG-INFO", "SOURCES.txt", "dependency_links.txt", "entry_points.txt", "top_level.txt"}
+        # requires.txt 只在声明了可选依赖（extras）时出现，属于正常元数据。
+        metadata = {"PKG-INFO", "SOURCES.txt", "dependency_links.txt", "entry_points.txt",
+                    "top_level.txt", "requires.txt"}
         allowed = required | {"MANIFEST.in", "setup.cfg"} | {"agent_immunity.egg-info/" + part for part in metadata}
     missing, extra = required - files, files - allowed
     if missing or extra:

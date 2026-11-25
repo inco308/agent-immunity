@@ -25,6 +25,11 @@ dependencies = []
 [project.scripts]
 agent-immunity = "agent_immunity.mcp_stdio:main"
 agent-immunity-check = "agent_immunity.doctor:main"
+agent-immunity-capture = "agent_immunity.capture:main"
+
+[project.optional-dependencies]
+# 采集上游 tools/list 快照需要官方 MCP SDK；核心运行时仍不依赖它。
+interop = ["mcp==1.30.0"]
 
 [project.urls]
 Homepage = "https://github.com/inco308/agent-immunity"
