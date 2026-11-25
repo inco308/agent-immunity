@@ -3,7 +3,7 @@ import argparse
 import json
 from pathlib import Path
 
-from .core.policy import Policy, contained, resolved, strict_json
+from .core.policy import Policy, PolicyError, contained, resolved, strict_json
 
 
 MESSAGES = {
@@ -98,9 +98,10 @@ def check(policy_path, catalog_path=None):
         "status": "pass", "registered_tools": 0, "hidden_tools": None, "findings": [],
     }
 
-    def record(code, tool=None, field=None):
+    def record(code, tool=None, field=None, detail=None):
         severity = "review" if code == "SCHEMA_REVIEW" else "error"
-        entry = {"code": code, "severity": severity, "message": MESSAGES[code]}
+        # detail 来自 PolicyError，只含字段名与策略里写的路径，不含参数实值。
+        entry = {"code": code, "severity": severity, "message": detail or MESSAGES[code]}
         if tool is not None:
             entry["tool"] = tool
         if field is not None:
@@ -113,6 +114,9 @@ def check(policy_path, catalog_path=None):
         supplied = Path(policy_path).absolute()
         path = resolved(supplied, strict=True)
         policy = Policy.load(path)
+    except PolicyError as error:
+        record("POLICY_INVALID", detail=str(error))
+        return report
     except INPUT_ERRORS:
         record("POLICY_INVALID")
         return report

@@ -11,6 +11,26 @@ from urllib.parse import urlsplit
 class PolicyError(ValueError):
     pass
 
+TOP_LEVEL_FIELDS = {"version", "workspace", "tools", "transitions", "max_bytes", "max_secrets", "max_events"}
+TOOL_FIELDS = {"capabilities", "parameters", "required", "path_fields", "roots", "url_fields", "origins",
+               "allowed_arguments", "output_untrusted", "sensitive_fields", "state"}
+PARAMETER_TYPES = {"string", "integer", "number", "boolean", "object", "array"}
+CAPABILITIES = {"read", "write", "network", "execute", "compute"}
+
+def name_phrase(value, limit=32):
+    """把配置里的名称安全地放进错误信息：只截断展示，不回显取值内容。"""
+    text = value if isinstance(value, str) else repr(value)
+    text = "".join(char if char.isprintable() else "?" for char in text)
+    return text if len(text) <= limit else text[:limit] + "…"
+
+def key_phrase(keys, limit=3):
+    """列出字段名；数量过多时给出总数而不是整份清单。"""
+    names = sorted(name_phrase(key) for key in keys)
+    if not names:
+        return ""
+    shown = "、".join(names[:limit])
+    return shown + (f" 等 {len(names)} 项" if len(names) > limit else "")
+
 def resolved(path, strict=False):
     try:
         if strict:
@@ -106,79 +126,132 @@ class Policy:
 
     @classmethod
     def load(cls, path):
-        path = resolved(Path(path))
-        if path.stat().st_size > 1048576:
-            raise PolicyError("策略文件过大")
-        return cls.from_dict(strict_json(path.read_text(encoding="utf-8")), path.parent)
+        # 调用方只应处理 PolicyError：文件不存在、不可读、JSON 非法都在这里转换。
+        try:
+            path = resolved(Path(path))
+            if path.stat().st_size > 1048576:
+                raise PolicyError("策略文件过大")
+            text = path.read_text(encoding="utf-8")
+        except PolicyError:
+            raise
+        except OSError as exc:
+            raise PolicyError(f"策略文件无法读取: {name_phrase(Path(path).name)}") from exc
+        try:
+            data = strict_json(text)
+        except (ValueError, RecursionError) as exc:
+            raise PolicyError("策略文件不是合法的 UTF-8 JSON") from exc
+        return cls.from_dict(data, path.parent)
 
     @classmethod
     def from_dict(cls, data, base=None):
-        if not isinstance(data, dict) or set(data) - {"version", "workspace", "tools", "transitions", "max_bytes", "max_secrets", "max_events"}:
-            raise PolicyError("无效策略字段")
+        if not isinstance(data, dict):
+            raise PolicyError("策略必须是 JSON 对象")
+        unknown = set(data) - TOP_LEVEL_FIELDS
+        if unknown:
+            raise PolicyError(f"不支持的顶层字段: {key_phrase(unknown)}")
         if type(data.get("version")) is not int or data["version"] != 1:
             raise PolicyError("仅支持 version=1 的策略")
         if not isinstance(data.get("workspace"), str) or not data["workspace"]:
-            raise PolicyError("必须指定 workspace")
-        workspace = resolved(Path(base or Path.cwd()) / data["workspace"], strict=True)
+            raise PolicyError("缺少 workspace 字段，必须是非空字符串")
+        try:
+            workspace = resolved(Path(base or Path.cwd()) / data["workspace"], strict=True)
+        except PolicyError as exc:
+            raise PolicyError(f"workspace 无法解析: {exc}") from exc
+        except (OSError, RuntimeError) as exc:
+            raise PolicyError("workspace 目录不存在或无法访问") from exc
         if not workspace.is_dir():
             raise PolicyError("workspace 必须是现有目录")
         raw_tools = data.get("tools")
         if not isinstance(raw_tools, dict):
             raise PolicyError("tools 必须是对象")
         tools = {}
-        fields = {"capabilities", "parameters", "required", "path_fields", "roots", "url_fields", "origins", "allowed_arguments", "output_untrusted", "sensitive_fields", "state"}
-        types = {"string", "integer", "number", "boolean", "object", "array"}
         for name, spec in raw_tools.items():
-            if not isinstance(name, str) or not name or not isinstance(spec, dict) or set(spec) - fields:
-                raise PolicyError("无效工具定义")
-            caps = frozenset(string_list(spec.get("capabilities", []), "capabilities"))
-            if not caps or caps - {"read", "write", "network", "execute", "compute"}:
-                raise PolicyError("无效的工具能力")
+            if not isinstance(name, str) or not name:
+                raise PolicyError(f"工具名必须是非空字符串: {name_phrase(name)}")
+            if not isinstance(spec, dict):
+                raise PolicyError(f"工具 {name_phrase(name)} 的定义必须是对象")
+            unknown = set(spec) - TOOL_FIELDS
+            if unknown:
+                raise PolicyError(f"工具 {name_phrase(name)} 含不支持的字段: {key_phrase(unknown)}")
+            caps = frozenset(string_list(spec.get("capabilities", []), f"工具 {name_phrase(name)} 的 capabilities"))
+            if not caps:
+                raise PolicyError(f"工具 {name_phrase(name)} 未声明任何能力")
+            unsupported = caps - CAPABILITIES
+            if unsupported:
+                raise PolicyError(f"工具 {name_phrase(name)} 含不支持的能力: {key_phrase(unsupported)}")
             params = spec.get("parameters", {})
-            if not isinstance(params, dict) or any(not isinstance(k, str) or not k or not isinstance(v, str) or v not in types for k, v in params.items()):
-                raise PolicyError("parameters 使用受支持的顶层类型")
+            if not isinstance(params, dict):
+                raise PolicyError(f"工具 {name_phrase(name)} 的 parameters 必须是对象")
+            for key, kind in params.items():
+                if not isinstance(key, str) or not key:
+                    raise PolicyError(f"工具 {name_phrase(name)} 的参数名必须是非空字符串")
+                if not isinstance(kind, str) or kind not in PARAMETER_TYPES:
+                    raise PolicyError(
+                        f"工具 {name_phrase(name)} 的参数 {name_phrase(key)} 使用了不支持的类型；"
+                        f"可用类型: {', '.join(sorted(PARAMETER_TYPES))}")
             required = string_list(spec.get("required", list(params)), "required")
             paths = string_list(spec.get("path_fields", []), "path_fields")
             urls = string_list(spec.get("url_fields", []), "url_fields")
-            if not set(required) <= params.keys() or any(params.get(k) != "string" or k not in required for k in paths + urls):
-                raise PolicyError("路径和 URL 字段必须是必填字符串")
-            roots = tuple(resolved(workspace / p, strict=True) for p in string_list(spec.get("roots", []), "roots"))
-            if any(not p.is_dir() or not contained(p, workspace) for p in roots):
-                raise PolicyError("roots 必须是 workspace 内的现有目录")
+            undeclared = set(required) - params.keys()
+            if undeclared:
+                raise PolicyError(f"工具 {name_phrase(name)} 的 required 含未声明参数: {key_phrase(undeclared)}")
+            for key in paths + urls:
+                if key not in required:
+                    raise PolicyError(f"工具 {name_phrase(name)} 的路径/URL 字段 {name_phrase(key)} 必须是必填字段")
+                if params.get(key) != "string":
+                    raise PolicyError(f"工具 {name_phrase(name)} 的路径/URL 字段 {name_phrase(key)} 必须是 string 类型")
+            try:
+                roots = tuple(resolved(workspace / item, strict=True)
+                              for item in string_list(spec.get("roots", []), f"工具 {name_phrase(name)} 的 roots"))
+            except PolicyError as exc:
+                raise PolicyError(f"工具 {name_phrase(name)} 的 roots 无效: {exc}") from exc
+            except (OSError, RuntimeError) as exc:
+                raise PolicyError(f"工具 {name_phrase(name)} 的 roots 含不存在的目录") from exc
+            if any(not root.is_dir() or not contained(root, workspace) for root in roots):
+                raise PolicyError(f"工具 {name_phrase(name)} 的 roots 必须是 workspace 内的现有目录")
             if caps & {"read", "write"} and (not roots or not paths):
                 raise PolicyError("文件读写工具必须限定路径和根目录")
             origins = []
             for item in string_list(spec.get("origins", []), "origins"):
                 parts = urlsplit(item)
                 if parts.path not in ("", "/") or parts.query or parts.fragment:
-                    raise PolicyError("origins 只接受协议、主机及端口")
+                    raise PolicyError(f"工具 {name_phrase(name)} 的 origins 只接受协议、主机及端口")
                 origins.append(origin(item))
             if "network" in caps and (not urls or not origins):
-                raise PolicyError("网络能力必须指定 URL 字段和允许 origin")
+                raise PolicyError(f"工具 {name_phrase(name)} 声明了 network 能力，但缺少 url_fields 或 origins")
             allowed = spec.get("allowed_arguments", [])
-            if not isinstance(allowed, list) or any(not isinstance(x, dict) for x in allowed):
-                raise PolicyError("allowed_arguments 必须是参数对象列表")
+            if not isinstance(allowed, list):
+                raise PolicyError(f"工具 {name_phrase(name)} 的 allowed_arguments 必须是列表")
+            for index, item in enumerate(allowed):
+                if not isinstance(item, dict):
+                    raise PolicyError(
+                        f"工具 {name_phrase(name)} 的 allowed_arguments 第 {index + 1} 项必须是对象")
             if "execute" in caps and not allowed:
-                raise PolicyError("执行能力必须有精确参数白名单")
+                raise PolicyError(f"工具 {name_phrase(name)} 声明了 execute 能力，但 allowed_arguments 为空")
             untrusted = spec.get("output_untrusted", True)
             if type(untrusted) is not bool:
-                raise PolicyError("output_untrusted 必须为布尔值")
+                raise PolicyError(f"工具 {name_phrase(name)} 的 output_untrusted 必须是布尔值")
             state = spec.get("state", name)
             if not isinstance(state, str) or not state or state == "START":
-                raise PolicyError("无效工具状态")
+                raise PolicyError(f"工具 {name_phrase(name)} 的 state 必须是非空字符串且不等于 START")
             tools[name] = ToolPolicy(caps, MappingProxyType(dict(params)), required, paths, roots, urls, frozenset(origins), frozenset(canonical(x) for x in allowed), untrusted, string_list(spec.get("sensitive_fields", []), "sensitive_fields"), state)
         transitions = data.get("transitions", {})
         states = {"START"} | {spec.state for spec in tools.values()}
-        if not isinstance(transitions, dict) or any(k not in states for k in transitions):
-            raise PolicyError("无效状态表")
+        if not isinstance(transitions, dict):
+            raise PolicyError("transitions 必须是对象")
+        undefined = {key for key in transitions if key not in states}
+        if undefined:
+            raise PolicyError(f"状态表含未定义的状态: {key_phrase(undefined)}")
         transitions = {k: frozenset(string_list(v, "transitions")) for k, v in transitions.items()}
-        if any(not v <= states for v in transitions.values()):
-            raise PolicyError("转移目标未定义")
+        for state, targets in transitions.items():
+            missing = set(targets) - states
+            if missing:
+                raise PolicyError(f"状态 {name_phrase(state)} 的转移目标未定义: {key_phrase(missing)}")
         limits = {}
         for key, default, upper in [("max_bytes", 262144, 1048576), ("max_secrets", 128, 4096), ("max_events", 256, 4096)]:
             value = data.get(key, default)
             if type(value) is not int or not 1 <= value <= upper:
-                raise PolicyError(f"{key} 超出范围")
+                raise PolicyError(f"{key} 必须是 1 到 {upper} 之间的整数")
             limits[key] = value
         return cls(workspace, MappingProxyType(tools), MappingProxyType(transitions), **limits)
 
