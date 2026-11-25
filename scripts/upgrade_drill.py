@@ -4,8 +4,8 @@
 目录用 `interop.capture_catalog` 采集（该步骤需要锁定的 MCP SDK），本工具只做
 比较与判定，不依赖 SDK：
 
-    python -m interop.capture_catalog --output before.json -- <升级前上游命令>
-    python -m interop.capture_catalog --output after.json  -- <升级后上游命令>
+    agent-immunity-capture --output before.json -- <升级前上游命令>
+    agent-immunity-capture --output after.json  -- <升级后上游命令>
     python -m scripts.upgrade_drill --policy P.json \
         --old-catalog before.json --new-catalog after.json --json
 

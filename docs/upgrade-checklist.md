@@ -25,10 +25,10 @@
 
 ### 2. 采集升级前的完整工具目录
 
-采集需要官方 MCP SDK，因此用已有的采集器（环境见 [interop/requirements.lock](../interop/requirements.lock)），演练工具本身只读文件、不依赖 SDK：
+采集需要官方 MCP SDK，演练工具本身只读文件、不依赖 SDK。安装发行包后执行 `python -m pip install 'agent-immunity[interop]'` 即可使用 `agent-immunity-capture`；在仓库内也可以用 `python -m interop.capture_catalog`（环境见 [interop/requirements.lock](../interop/requirements.lock)）：
 
 ```text
-python -m interop.capture_catalog --output artifacts/catalog-before.json -- <升级前上游命令>
+agent-immunity-capture --output artifacts/catalog-before.json -- <升级前上游命令>
 ```
 
 目录必须是完整 `tools/list`：包含全部工具，且没有后续分页（带 `nextCursor` 的快照会被拒绝）。采集器会在已知 schema 节点去掉描述、示例、默认值等注解，因此纯文档改动不会制造差异噪音。
@@ -48,7 +48,7 @@ python -m agent_immunity.doctor --policy <你的策略>.json --catalog <升级�
 ### 5. 采集升级后的目录并跑漂移演练
 
 ```text
-python -m interop.capture_catalog --output artifacts/catalog-after.json -- <升级后上游命令>
+agent-immunity-capture --output artifacts/catalog-after.json -- <升级后上游命令>
 python -m scripts.upgrade_drill \
   --policy <你的策略>.json \
   --old-catalog <升级前目录>.json \
