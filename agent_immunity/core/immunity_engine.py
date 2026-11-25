@@ -6,11 +6,15 @@ from .models import AuditEvent, Decision, ToolCall, ToolResult
 from .policy import Policy, PolicyError, canonical
 from .state_machine import SessionState
 from .taint_tracker import TaintTracker, TrackingLimit
+from ..audit import AuditError, AuditLog
 
 class DynamicImmunityEngine:
-    def __init__(self, policy: Policy, user_goal=""):
+    def __init__(self, policy: Policy, user_goal="", audit=None):
         if not isinstance(policy, Policy):
             raise TypeError("0.2 必须传入受信 Policy；不再从 user_goal 推断权限")
+        if audit is not None and not isinstance(audit, AuditLog):
+            raise TypeError("audit 必须是 AuditLog 或 None")
+        self.audit = audit
         self.policy = policy
         self.user_goal = user_goal
         self.state = SessionState(policy.transitions)
@@ -18,7 +22,21 @@ class DynamicImmunityEngine:
         self.events = deque(maxlen=policy.max_events)
         self._pending = None
         self._closed = False
+        self._audit_failed = False
         self._lock = threading.RLock()
+
+    def _record(self, event, tool_name, code, completed):
+        """同时写入内存事件与（可选的）审计文件；审计失败按失败关闭处理。"""
+        self.events.append(AuditEvent(tool_name, code, completed))
+        if self.audit is None or self._audit_failed:
+            return
+        try:
+            self.audit.write(event, tool_name, code, completed)
+        except AuditError:
+            # 审计写不进去就无法事后核对：结束会话，且不再重复尝试。
+            self._audit_failed = True
+            self._closed = True
+            raise
 
     def check_call(self, call: ToolCall) -> Decision:
         with self._lock:
@@ -50,8 +68,18 @@ class DynamicImmunityEngine:
                 self._pending = saved
             else:
                 name = call.tool_name if isinstance(call, ToolCall) and isinstance(call.tool_name, str) and call.tool_name in self.policy.tools else "<unregistered>"
-                self.events.append(AuditEvent(name, decision.code, False))
+                try:
+                    self._record("decision", name, decision.code, False)
+                except AuditError:
+                    return Decision(False, "AUDIT_UNAVAILABLE", "审计不可用，已拒绝该调用并结束会话")
             return decision
+
+    def _safe_record(self, event, tool_name, code, completed):
+        """收尾路径上的记录：审计失败只关闭会话，不改变已经确定的返回值。"""
+        try:
+            self._record(event, tool_name, code, completed)
+        except AuditError:
+            self._closed = True
 
     @staticmethod
     def rejected(code, reason):
@@ -71,17 +99,21 @@ class DynamicImmunityEngine:
                 result.taint_tag = self.taint_tracker.observe(call.tool_name, result.output, spec.output_untrusted, spec.sensitive_fields)
             except (ValueError, TypeError, OverflowError, RecursionError):
                 self._closed = True
-                self.events.append(AuditEvent(call.tool_name, "RESULT_REJECTED", False))
+                self._safe_record("completion", call.tool_name, "RESULT_REJECTED", False)
                 return self.rejected("RESULT_REJECTED", "结果无法安全跟踪，会话已关闭；上游操作可能已经发生")
             if not result.is_error:
                 self.state.commit(spec.state)
-            self.events.append(AuditEvent(call.tool_name, "TOOL_ERROR" if result.is_error else "COMPLETED", not result.is_error))
+            code = "TOOL_ERROR" if result.is_error else "COMPLETED"
+            try:
+                self._record("completion", call.tool_name, code, not result.is_error)
+            except AuditError:
+                return self.rejected("AUDIT_UNAVAILABLE", "审计不可用，会话已关闭；上游操作可能已经发生")
             return result
 
     def abort(self, terminal=True):
         with self._lock:
             if self._pending is not None:
-                self.events.append(AuditEvent(self._pending.tool_name, "ABORTED", False))
+                self._safe_record("abort", self._pending.tool_name, "ABORTED", False)
             self._pending = None
             self._closed = self._closed or terminal
 
@@ -101,6 +133,8 @@ class DynamicImmunityEngine:
     def close(self):
         self.abort()
         self.taint_tracker.clear()
+        if self.audit is not None:
+            self.audit.close()
 
     @property
     def closed(self):

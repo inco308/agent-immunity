@@ -6,6 +6,7 @@ import sys
 import threading
 import time
 from . import DynamicImmunityEngine, Policy, PolicyError, ToolCall, ToolResult, __version__
+from .audit import AuditError, AuditLog
 from .core.policy import canonical, strict_json
 
 VERSION = "2025-06-18"
@@ -17,14 +18,14 @@ def error(call_id, code, message):
     return {"jsonrpc": "2.0", "id": call_id, "error": {"code": code, "message": message}}
 
 class StdioProxy:
-    def __init__(self, policy, command, timeout=30, input_stream=None, output_stream=None):
+    def __init__(self, policy, command, timeout=30, input_stream=None, output_stream=None, audit=None):
         self.policy = policy
         self.command = command
         self.timeout = timeout
         # 后台线程可能仍等待客户端输入；避免解释器退出时争抢缓冲读取锁。
         self.input = input_stream or sys.stdin.buffer.raw
         self.output = output_stream or sys.stdout.buffer
-        self.engine = DynamicImmunityEngine(policy)
+        self.engine = DynamicImmunityEngine(policy, audit=audit)
         self.messages = queue.Queue(maxsize=64)
         self.outgoing = queue.Queue(maxsize=64)
         self.process = None
@@ -296,6 +297,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--policy", required=True, help="受信本地 JSON 策略")
     parser.add_argument("--timeout", type=float, default=30, help="每次上游请求超时秒数")
+    parser.add_argument("--audit", help="可选：把判定追加写入该 JSONL 文件；不含参数与返回值")
+    parser.add_argument("--audit-max-bytes", type=int, default=None, help="审计文件大小上限，默认 8 MiB")
+    parser.add_argument("--audit-max-records", type=int, default=None, help="审计记录条数上限，默认 100000")
     parser.add_argument("upstream", nargs=argparse.REMAINDER, help="-- 之后指定受信上游命令")
     args = parser.parse_args()
     command = args.upstream[1:] if args.upstream[:1] == ["--"] else args.upstream
@@ -307,7 +311,19 @@ def main():
         parser.error(f"无法加载本地策略：{error}")
     except (OSError, ValueError, TypeError, RecursionError):
         parser.error("无法加载有效的本地策略")
-    return StdioProxy(policy, command, args.timeout).run()
+    audit = None
+    if args.audit:
+        options = {}
+        if args.audit_max_bytes is not None:
+            options["max_bytes"] = args.audit_max_bytes
+        if args.audit_max_records is not None:
+            options["max_records"] = args.audit_max_records
+        try:
+            audit = AuditLog(args.audit, **options)
+        except (AuditError, ValueError) as error:
+            # 启动即失败，避免运行到一半才发现审计不可用。
+            parser.error(f"无法启用审计：{error}")
+    return StdioProxy(policy, command, args.timeout, audit=audit).run()
 
 if __name__ == "__main__":
     raise SystemExit(main())
