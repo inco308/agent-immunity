@@ -40,7 +40,7 @@ REVIEW_KINDS = frozenset({
     "TOOL_ADDED", "TOOL_REMOVED", "REQUIRED_LOOSENED",
     "PROPERTY_ADDED", "PROPERTY_REMOVED", "TYPE_CHANGED",
     "CALL_MISSING", "ERROR_CHANGED", "FIELD_ADDED", "FIELD_REMOVED",
-    "OBSERVATION_TYPE_CHANGED", "VALUE_CHANGED",
+    "OBSERVATION_TYPE_CHANGED", "VALUE_CHANGED", "DECISION_CHANGED",
     "STRUCTURED_ADDED", "STRUCTURED_REMOVED",
 })
 OBSERVATION_MESSAGES = {
@@ -50,6 +50,7 @@ OBSERVATION_MESSAGES = {
     "FIELD_REMOVED": "返回中缺少原有字段；下游解析可能失败。",
     "OBSERVATION_TYPE_CHANGED": "同一字段的类型发生变化。",
     "VALUE_CHANGED": "同一字段的取值发生变化。",
+    "DECISION_CHANGED": "同一次调用的策略判定发生变化。",
     "STRUCTURED_ADDED": "上游开始提供 structuredContent。",
     "STRUCTURED_REMOVED": "上游不再提供 structuredContent。",
 }
@@ -114,8 +115,8 @@ def _ignored(path, patterns):
     return any(path == pattern or path.startswith(pattern + ".") for pattern in patterns)
 
 
-def load_observations(path):
-    """读取 agent-immunity-probe 产出的观测，按调用 id 建索引。"""
+def load_observation_document(path):
+    """读取 agent-immunity-probe 产出的完整观测文档。"""
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
@@ -125,8 +126,16 @@ def load_observations(path):
     calls = data.get("calls")
     if not isinstance(calls, list):
         raise ValueError("观测文件缺少 calls 列表")
+    effects = data.get("effects", [])
+    if not isinstance(effects, list) or any(not isinstance(item, dict) for item in effects):
+        raise ValueError("观测文件的 effects 必须是对象列表")
+    return data
+
+
+def load_observations(path):
+    """按调用 id 索引观测记录。"""
     indexed = {}
-    for entry in calls:
+    for entry in load_observation_document(path)["calls"]:
         if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
             raise ValueError("观测文件的每个调用都需要字符串 id")
         indexed[entry["id"]] = entry
@@ -151,6 +160,9 @@ def observation_changes(old_calls, new_calls, ignore=()):
             continue
         if bool(before.get("is_error")) != bool(after.get("is_error")):
             add("ERROR_CHANGED", call_id)
+        old_decision, new_decision = before.get("decision"), after.get("decision")
+        if old_decision is not None and new_decision is not None and old_decision != new_decision:
+            add("DECISION_CHANGED", call_id, before=old_decision, after=new_decision)
         if bool(before.get("structured")) != bool(after.get("structured")):
             add("STRUCTURED_ADDED" if after.get("structured") else "STRUCTURED_REMOVED", call_id)
         shape_before, shape_after = before.get("shape") or {}, after.get("shape") or {}
@@ -197,7 +209,7 @@ def load_expectations(path):
         raise ValueError(f"断言文件无法读取: {Path(path).name}") from exc
     if not isinstance(data, dict) or data.get("version") != 1:
         raise ValueError("断言文件必须是 version=1 的对象")
-    unknown = set(data) - {"version", "ignore", "expect", "note"}
+    unknown = set(data) - {"version", "ignore", "expect", "forbid_effects", "note"}
     if unknown:
         raise ValueError(f"断言文件含不支持的字段: {', '.join(sorted(unknown))}")
     ignore = data.get("ignore", [])
@@ -209,7 +221,7 @@ def load_expectations(path):
     for index, item in enumerate(expect):
         if not isinstance(item, dict):
             raise ValueError(f"expect 第 {index + 1} 项必须是对象")
-        extra = set(item) - {"id", "path", "equals", "contains", "note"}
+        extra = set(item) - {"id", "path", "equals", "contains", "decision", "note"}
         if extra:
             raise ValueError(f"expect 第 {index + 1} 项含不支持的字段: {', '.join(sorted(extra))}")
         if not isinstance(item.get("id"), str) or not item["id"]:
@@ -217,9 +229,31 @@ def load_expectations(path):
         if "contains" in item:
             if not isinstance(item["contains"], str):
                 raise ValueError(f"expect 第 {index + 1} 项的 contains 必须是字符串")
+        elif "decision" in item:
+            if not isinstance(item["decision"], str) or not item["decision"]:
+                raise ValueError(f"expect 第 {index + 1} 项的 decision 必须是非空字符串")
         elif not isinstance(item.get("path"), str) or "equals" not in item:
-            raise ValueError(f"expect 第 {index + 1} 项需要 path 与 equals，或 contains")
-    return {"ignore": ignore, "expect": expect}
+            raise ValueError(f"expect 第 {index + 1} 项需要 path 与 equals、contains 或 decision")
+    forbid = data.get("forbid_effects", [])
+    if not isinstance(forbid, list) or any(not isinstance(item, str) or not item for item in forbid):
+        raise ValueError("forbid_effects 必须是非空字符串列表")
+    return {"ignore": ignore, "expect": expect, "forbid_effects": forbid}
+
+
+def check_forbidden_effects(effects, forbidden):
+    """副作用验收：被禁止的路径不得出现在任何一次快照差异里。"""
+    failures = []
+    for entry in effects:
+        if entry.get("truncated"):
+            failures.append({"reason": "文件快照被截断，无法据此证明没有副作用",
+                             "root": entry.get("root")})
+            continue
+        for kind in ("created", "modified", "removed"):
+            for path in entry.get(kind) or []:
+                if any(path == item or path.startswith(item.rstrip("/") + "/") for item in forbidden):
+                    failures.append({"root": entry.get("root"), "path": path,
+                                     "kind": kind, "reason": "被禁止的路径发生了变化"})
+    return failures
 
 
 def check_expectations(calls, expectations):
@@ -235,6 +269,15 @@ def check_expectations(calls, expectations):
             if item["contains"] not in (record.get("text") or ""):
                 failures.append({"call": call_id, "reason": "返回文本不含期望片段",
                                  "expected": item["contains"]})
+            continue
+        if "decision" in item:
+            actual_decision = record.get("decision")
+            if actual_decision is None:
+                failures.append({"call": call_id, "reason": "该观测未经过代理，没有判定码",
+                                 "expected": item["decision"]})
+            elif actual_decision != item["decision"]:
+                failures.append({"call": call_id, "reason": "判定码不符",
+                                 "expected": item["decision"], "actual": actual_decision})
             continue
         actual = _value_at(record.get("json"), item["path"])
         if actual is _MISSING:
@@ -266,24 +309,39 @@ def run(policy_path, old_catalog_path, new_catalog_path,
 
     observation_report = None
     failures = []
-    if old_observations is not None and new_observations is not None:
+    if new_observations is not None:
         spec = expectations or {"ignore": [], "expect": []}
-        before = load_observations(old_observations)
+        # 只给新版观测时做单版本断言（例如升级后核对"该被拒的确实被拒了"）。
+        before = load_observations(old_observations) if old_observations is not None else {}
         after = load_observations(new_observations)
-        observation_changes_list = observation_changes(before, after, spec["ignore"])
+        document = load_observation_document(new_observations)
+        # 没有升级前观测时只做单版本断言，不比较调用集合。
+        observation_changes_list = (observation_changes(before, after, spec["ignore"])
+                                    if old_observations is not None else [])
         failures = check_expectations(after, spec["expect"])
+        effect_failures = check_forbidden_effects(document.get("effects", []),
+                                                  spec.get("forbid_effects", []))
+        failures = failures + effect_failures
         observation_report = {
             "calls": sorted(set(before) | set(after)),
             "changes": observation_changes_list,
             "expectation_failures": failures,
             "ignored_paths": spec["ignore"],
+            "effects": document.get("effects", []),
+            "proxied": bool((document.get("upstream") or {}).get("proxied")),
         }
         changes = changes + observation_changes_list
+        # 判定从拒绝变成放行是安全回退，必须判错而不是只提示复核。
+        if any(change["kind"] == "DECISION_CHANGED" and change["after"] == "PASS"
+               and change["before"] != "PASS" for change in observation_changes_list):
+            failures.append({"reason": "同一次调用从被拒变为放行，属于安全回退"})
 
     status = "error" if failures else verdict(baseline, upgraded, changes)
-    not_measured = ["语义变化", "真实业务结果", "副作用是否发生"]
+    not_measured = ["语义变化", "真实业务结果"]
     if old_observations is None:
         not_measured.insert(0, "输出结构变化")
+    if observation_report is None or not observation_report["effects"]:
+        not_measured.append("副作用是否发生（未提供 --watch 快照）")
     report = {
         "schema_version": 1,
         "scope": "UPGRADE_DRIFT",
@@ -311,8 +369,8 @@ def main(argv=None):
     parser.add_argument("--json", action="store_true", help="输出适合 CI 使用的 JSON")
     args = parser.parse_args(argv)
 
-    if (args.old_observations is None) != (args.new_observations is None):
-        parser.error("--old-observations 与 --new-observations 必须同时提供")
+    if args.old_observations is not None and args.new_observations is None:
+        parser.error("--old-observations 需要同时提供 --new-observations")
     if args.expect is not None and args.new_observations is None:
         parser.error("--expect 必须与观测一起使用")
     try:
@@ -347,7 +405,10 @@ def main(argv=None):
                   f"忽略路径 {len(observations['ignored_paths'])} 条，"
                   f"断言失败 {len(observations['expectation_failures'])} 条")
             for failure in observations["expectation_failures"]:
-                print(f"  ! 断言失败 {failure['call']} {failure.get('path', '')}：{failure['reason']}")
+                # 副作用类失败没有 call，用 root/kind 定位。
+                subject = " ".join(str(failure[key]) for key in ("call", "root", "path", "kind")
+                                   if failure.get(key))
+                print(f"  ! 失败 {subject}：{failure['reason']}".replace("  ", " "))
         print("  未测量：" + "、".join(report["not_measured"]))
     return EXIT_CODES[report["status"]]
 

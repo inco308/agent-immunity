@@ -8,6 +8,13 @@
 
     agent-immunity-probe --calls calls.json --output before.json -- <升级前上游命令>
 
+加上 --policy 时调用会经过代理，记录每次调用的判定码（放行记为 PASS），
+用于核对"该被拒的确实被拒了"；再加上 --watch DIR 会在会话前后各拍一次
+文件快照，记录新增、修改与删除，用于副作用验收。
+
+    agent-immunity-probe --calls calls.json --policy policy.json \
+        --watch workspace --output obs.json -- <上游命令>
+
 `calls.json` 形如：
 
     {"version": 1, "calls": [
@@ -27,6 +34,8 @@ from .capture import write_atomic
 
 MAX_CALLS = 64
 MAX_TEXT = 262144
+MAX_WATCH_FILES = 2000
+PROXY_MODULE = "agent_immunity.mcp_stdio"
 
 
 class ProbeError(ValueError):
@@ -61,6 +70,50 @@ def load_calls(path):
             raise ProbeError(f"调用 {name} 的 arguments 必须是对象")
         seen.add(name)
     return calls
+
+
+def snapshot(root, max_files=MAX_WATCH_FILES):
+    """记录一个目录下每个文件的 (大小, mtime)；只存元数据，不读内容。"""
+    base = Path(root)
+    if not base.is_dir():
+        raise ProbeError(f"监控目录不存在: {base.name}")
+    files = {}
+    truncated = False
+    for count, path in enumerate(sorted(base.rglob("*"))):
+        if count >= max_files:
+            truncated = True
+            break
+        try:
+            if path.is_symlink():
+                files[str(path.relative_to(base))] = ["symlink"]
+            elif path.is_file():
+                stat = path.stat()
+                files[str(path.relative_to(base))] = [stat.st_size, stat.st_mtime_ns]
+        except OSError:
+            # 快照期间文件被删除：忽略，最终差异里会体现。
+            continue
+    return {"files": files, "truncated": truncated}
+
+
+def effects(before, after):
+    """比较两次快照，给出新增、修改与删除的相对路径。"""
+    old, new = before["files"], after["files"]
+    return {
+        "created": sorted(set(new) - set(old)),
+        "removed": sorted(set(old) - set(new)),
+        "modified": sorted(path for path in set(old) & set(new) if old[path] != new[path]),
+        "truncated": bool(before["truncated"] or after["truncated"]),
+    }
+
+
+def decision_of(meta):
+    """从代理返回的 _meta 取判定码；没有标记说明调用被放行并转发给上游。"""
+    if not isinstance(meta, dict):
+        return "PASS"
+    marker = meta.get("agent_immunity")
+    if isinstance(marker, dict) and isinstance(marker.get("code"), str):
+        return marker["code"]
+    return "PASS"
 
 
 def summarize(is_error, texts, structured):
@@ -125,7 +178,9 @@ def _run(command, cwd, entries, timeout):
                     structured = getattr(result, "structuredContent", None)
                     observed = summarize(bool(result.isError), texts, structured)
                     observations.append({"id": entry["id"], "tool": entry["tool"],
-                                         "arguments": entry.get("arguments", {}), **observed})
+                                         "arguments": entry.get("arguments", {}),
+                                         "decision": decision_of(getattr(result, "meta", None)),
+                                         **observed})
         return observations
 
     return anyio.run(run_all)
@@ -137,6 +192,9 @@ def main(argv=None):
     parser.add_argument("--calls", required=True, type=Path, help="固定调用清单")
     parser.add_argument("--output", required=True, type=Path, help="观测结果写入该文件")
     parser.add_argument("--cwd", type=Path, help="受信上游的工作目录，默认为当前目录")
+    parser.add_argument("--policy", type=Path, help="调用经过本地策略代理时使用的策略文件")
+    parser.add_argument("--watch", type=Path, action="append", default=[],
+                        help="会话前后各拍一次文件快照的目录，可重复")
     parser.add_argument("--timeout", type=float, default=60, help="每次握手或调用的时限，单位秒")
     argv = list(sys.argv[1:] if argv is None else argv)
     separator = argv.index("--") if "--" in argv else len(argv)
@@ -147,9 +205,19 @@ def main(argv=None):
 
     try:
         entries = load_calls(args.calls)
+        before_snapshots = [snapshot(item) for item in args.watch]
     except ProbeError as error:
         print(str(error), file=sys.stderr)
         return 2
+
+    if args.policy is not None:
+        try:
+            policy_path = args.policy.resolve(strict=True)
+        except OSError:
+            print("策略文件不存在或无法读取", file=sys.stderr)
+            return 2
+        # 用当前解释器启动代理，避免依赖 PATH 上的入口点。
+        command = [sys.executable, "-m", PROXY_MODULE, "--policy", str(policy_path), "--", *command]
 
     try:
         if version("mcp") != "1.30.0":
@@ -173,11 +241,22 @@ def main(argv=None):
     finally:
         logging.disable(previous)
 
+    watched = []
+    for item, before in zip(args.watch, before_snapshots):
+        try:
+            after = snapshot(item)
+        except ProbeError as error:
+            print(str(error), file=sys.stderr)
+            return 1
+        watched.append({"root": str(item), **effects(before, after)})
+
     payload = {
         "schema_version": 1,
         "scope": "UPSTREAM_OBSERVATIONS",
-        "upstream": {"command": command, "mcp_sdk": version("mcp")},
+        "upstream": {"command": command, "mcp_sdk": version("mcp"),
+                     "proxied": args.policy is not None},
         "calls": observations,
+        "effects": watched,
     }
     write_atomic(args.output, (json.dumps(payload, ensure_ascii=False, indent=1) + "\n").encode("utf-8"))
     return 0
