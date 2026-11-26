@@ -90,7 +90,8 @@ class DrillReportTests(unittest.TestCase):
         report = self.run_drill("catalog-2025.9.25.json", "catalog-2026.11.18.json")
         self.assertEqual(report["scope"], "UPGRADE_DRIFT")
         self.assertIn("输出结构变化", report["not_measured"])
-        self.assertIn("副作用是否发生", report["not_measured"])
+        # 没给 --watch 快照时，报告要说明"副作用"这一项仍未测量。
+        self.assertTrue(any("副作用是否发生" in item for item in report["not_measured"]))
 
 
 class CliTests(unittest.TestCase):

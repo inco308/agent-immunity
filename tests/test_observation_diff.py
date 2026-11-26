@@ -251,3 +251,103 @@ class CliObservationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SideEffectFixtureTests(unittest.TestCase):
+    """第 7 步副作用验收：真实代理会话的夹具 + 一个"泄漏发生了"的反向夹具。"""
+
+    def run_side(self, observations):
+        return upgrade_drill.run(
+            POLICY, fixture("catalog-2025.8.4.json"), fixture("catalog-2025.9.25.json"),
+            None, fixture(observations),
+            upgrade_drill.load_expectations(fixture("side-expectations.json")))
+
+    def test_denials_and_snapshot_pass_on_real_session(self):
+        report = self.run_side("observations-side.json")
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["observations"]["expectation_failures"], [])
+        self.assertTrue(report["observations"]["proxied"])
+        effects = report["observations"]["effects"]
+        created = sorted(path for entry in effects for path in entry["created"])
+        # 控制组：允许的写入必须出现在快照里，否则"没发生"无从证明
+        self.assertIn("workspace/probe-written.txt", created)
+        self.assertNotIn("escaped-by-probe.txt", created)
+
+    def test_decisions_match_expected_codes(self):
+        report = self.run_side("observations-side.json")
+        decisions = {entry["call"]: entry for entry in report["observations"]["changes"]}
+        self.assertEqual(decisions, {})  # 单版本模式没有差异
+        proxied = upgrade_drill.load_observations(fixture("observations-side.json"))
+        self.assertEqual(proxied["escape"]["decision"], "ARGUMENTS_DENIED")
+        self.assertEqual(proxied["inside"]["decision"], "PASS")
+
+    def test_forbidden_path_hit_is_an_error(self):
+        report = self.run_side("observations-side-leaked.json")
+        self.assertEqual(report["status"], "error")
+        failures = report["observations"]["expectation_failures"]
+        self.assertTrue(any(item.get("path") == "escaped-by-probe.txt" for item in failures))
+
+    def test_wrong_decision_is_an_error(self):
+        expectations = {"ignore": [], "forbid_effects": [],
+                        "expect": [{"id": "escape", "decision": "PASS"}]}
+        report = upgrade_drill.run(
+            POLICY, fixture("catalog-2025.8.4.json"), fixture("catalog-2025.9.25.json"),
+            None, fixture("observations-side.json"), expectations)
+        self.assertEqual(report["status"], "error")
+        self.assertEqual(report["observations"]["expectation_failures"][0]["reason"], "判定码不符")
+
+    def test_missing_decision_when_not_proxied(self):
+        expectations = {"ignore": [], "forbid_effects": [],
+                        "expect": [{"id": "convert-tokyo", "decision": "PASS"}]}
+        report = upgrade_drill.run(
+            POLICY, fixture("catalog-2025.8.4.json"), fixture("catalog-2025.9.25.json"),
+            None, fixture("observations-2025.9.25.json"), expectations)
+        self.assertEqual(report["status"], "error")
+        self.assertIn("未经过代理", report["observations"]["expectation_failures"][0]["reason"])
+
+    def test_deny_to_pass_is_treated_as_security_regression(self):
+        before = [observation("c", {"text": "string"}, None, text="x")]
+        before[0]["decision"] = "ARGUMENTS_DENIED"
+        after = [observation("c", {"text": "string"}, None, text="x")]
+        after[0]["decision"] = "PASS"
+        changes = upgrade_drill.observation_changes(
+            {entry["id"]: entry for entry in before}, {entry["id"]: entry for entry in after}, [])
+        self.assertEqual([change["kind"] for change in changes], ["DECISION_CHANGED"])
+        self.assertEqual((changes[0]["before"], changes[0]["after"]), ("ARGUMENTS_DENIED", "PASS"))
+
+
+class ForbiddenEffectTests(unittest.TestCase):
+    def test_prefix_and_exact_paths_are_matched(self):
+        effects = [{"root": "w", "created": ["a/b.txt", "c.txt"], "modified": [], "removed": []}]
+        self.assertEqual(len(upgrade_drill.check_forbidden_effects(effects, ["a"])), 1)
+        self.assertEqual(len(upgrade_drill.check_forbidden_effects(effects, ["c.txt"])), 1)
+        self.assertEqual(upgrade_drill.check_forbidden_effects(effects, ["zzz"]), [])
+
+    def test_truncated_snapshot_cannot_prove_absence(self):
+        effects = [{"root": "w", "created": [], "modified": [], "removed": [], "truncated": True}]
+        failures = upgrade_drill.check_forbidden_effects(effects, ["a"])
+        self.assertEqual(len(failures), 1)
+        self.assertIn("快照被截断", failures[0]["reason"])
+
+
+class SingleVersionTests(unittest.TestCase):
+    def test_only_new_observations_is_allowed(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = upgrade_drill.main([
+                "--policy", str(POLICY),
+                "--old-catalog", str(fixture("catalog-2025.8.4.json")),
+                "--new-catalog", str(fixture("catalog-2025.9.25.json")),
+                "--new-observations", str(fixture("observations-side.json")),
+                "--expect", str(fixture("side-expectations.json")),
+            ])
+        self.assertEqual(code, 0)
+
+    def test_old_observations_without_new_is_rejected(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                upgrade_drill.main([
+                    "--policy", str(POLICY),
+                    "--old-catalog", str(fixture("catalog-2025.8.4.json")),
+                    "--new-catalog", str(fixture("catalog-2025.9.25.json")),
+                    "--old-observations", str(fixture("observations-side.json")),
+                ])

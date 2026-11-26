@@ -1,0 +1,85 @@
+{
+ "schema_version": 1,
+ "scope": "UPSTREAM_OBSERVATIONS",
+ "upstream": {
+  "command": [
+   "$REPO/artifacts/llm-venv/bin/python",
+   "-m",
+   "agent_immunity.mcp_stdio",
+   "--policy",
+   "$REPO/examples/policy.json",
+   "--",
+   "$REPO/artifacts/fresh/bin/python",
+   "$REPO/examples/local_tools.py"
+  ],
+  "mcp_sdk": "1.30.0",
+  "proxied": true
+ },
+ "calls": [
+  {
+   "id": "version",
+   "tool": "python_version",
+   "arguments": {},
+   "decision": "PASS",
+   "is_error": false,
+   "text": "",
+   "json": null,
+   "structured": null,
+   "shape": {
+    "text": "string"
+   }
+  },
+  {
+   "id": "escape",
+   "tool": "write_file",
+   "arguments": {
+    "path": "../escaped-by-probe.txt",
+    "content": "x"
+   },
+   "decision": "ARGUMENTS_DENIED",
+   "is_error": true,
+   "text": "",
+   "json": null,
+   "structured": null,
+   "shape": {
+    "text": "string"
+   }
+  },
+  {
+   "id": "inside",
+   "tool": "write_file",
+   "arguments": {
+    "path": "probe-written.txt",
+    "content": "hello"
+   },
+   "decision": "PASS",
+   "is_error": false,
+   "text": "",
+   "json": null,
+   "structured": null,
+   "shape": {
+    "text": "string"
+   }
+  }
+ ],
+ "effects": [
+  {
+   "root": "examples",
+   "created": [
+    "workspace/probe-written.txt"
+   ],
+   "removed": [],
+   "modified": [],
+   "truncated": false
+  },
+  {
+   "root": "examples/workspace",
+   "created": [
+    "probe-written.txt"
+   ],
+   "removed": [],
+   "modified": [],
+   "truncated": false
+  }
+ ]
+}

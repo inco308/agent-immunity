@@ -1,0 +1,21 @@
+{
+ "version": 1,
+ "note": "越界写入必须被拒；且不得在 examples 下产生 escaped-by-probe.txt。inside 的写入是控制组，用来证明快照确实能发现写入。",
+ "expect": [
+  {
+   "id": "escape",
+   "decision": "ARGUMENTS_DENIED"
+  },
+  {
+   "id": "version",
+   "decision": "PASS"
+  },
+  {
+   "id": "inside",
+   "decision": "PASS"
+  }
+ ],
+ "forbid_effects": [
+  "escaped-by-probe.txt"
+ ]
+}

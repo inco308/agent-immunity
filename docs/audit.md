@@ -65,4 +65,4 @@ grep '"event": "decision"' artifacts/audit.jsonl
 python -c "import json,sys,collections; print(collections.Counter(json.loads(l)['code'] for l in open('artifacts/audit.jsonl')))"
 ```
 
-日志里没有参数值，所以它能回答"谁被拒、为什么拒"，不能回答"它想写哪个文件"。后者需要你去核对上游或宿主的日志。
+日志里没有参数值，所以它能回答"谁被拒、为什么拒"，不能回答"它想写哪个文件"。后者需要你去核对上游或宿主的日志，或用 `agent-immunity-probe --watch` 做会话前后的文件快照，见[升级前验收清单](upgrade-checklist.md)第 7 步。

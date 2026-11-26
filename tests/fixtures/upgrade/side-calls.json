@@ -1,0 +1,26 @@
+{
+ "version": 1,
+ "calls": [
+  {
+   "id": "version",
+   "tool": "python_version",
+   "arguments": {}
+  },
+  {
+   "id": "escape",
+   "tool": "write_file",
+   "arguments": {
+    "path": "../escaped-by-probe.txt",
+    "content": "x"
+   }
+  },
+  {
+   "id": "inside",
+   "tool": "write_file",
+   "arguments": {
+    "path": "probe-written.txt",
+    "content": "hello"
+   }
+  }
+ ]
+}
